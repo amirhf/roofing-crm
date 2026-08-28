@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.prismteam.ai/roofing-crm/lead/v1/schema.json",
+  "title": "Prism Roofing CRM anonymous-session lead v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "leadId",
+    "sessionIdHash",
+    "oracleReferenceKey",
+    "oracleContractVersion",
+    "oracleSchemaHash",
+    "propertyId",
+    "permitId",
+    "sourcePublicationCid",
+    "sourceCapturedAt",
+    "status",
+    "notes",
+    "createdAt",
+    "updatedAt",
+    "sessionExpiresAt"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "leadId": { "type": "string", "format": "uuid" },
+    "sessionIdHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "oracleReferenceKey": {
+      "type": "string",
+      "pattern": "^leadref_[a-f0-9]{32}$"
+    },
+    "oracleContractVersion": { "const": "1.0.0" },
+    "oracleSchemaHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "propertyId": {
+      "type": "string",
+      "pattern": "^prop_[a-f0-9]{32}$"
+    },
+    "permitId": {
+      "type": ["string", "null"],
+      "pattern": "^perm_[a-f0-9]{32}$"
+    },
+    "sourcePublicationCid": { "type": ["string", "null"] },
+    "sourceCapturedAt": { "type": "string", "format": "date-time" },
+    "status": {
+      "enum": ["new", "qualified", "contacted", "won", "lost"]
+    },
+    "notes": { "type": "string", "maxLength": 10000 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "sessionExpiresAt": {
+      "description": "Mandatory cookie/session expiry; the approved duration is seven days from session creation.",
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
