@@ -28,9 +28,9 @@ The normative lead shape is `contracts/crm-lead-v1.schema.json`. A lead stores i
 
 ## Oracle retrieval and interface
 
-The committed `contracts/mcp-v1.schema.json` is byte-identical to Oracle’s. Its SHA-256 is recorded in `contracts/contract-lock.json` and must match the live MCP discovery metadata before integration is claimed.
+The committed `contracts/mcp-v1.schema.json` is byte-identical to Oracle’s. Active v1-family revision `1.1.0` supersedes the committed `1.0.0` schema with SHA-256 `714ee037ffca1362870a5135328a783bfe4a0161e7136e09d4d1590894211de7`; both the active hash and superseded historical evidence are recorded in `contracts/contract-lock.json`. The active hash must match live MCP discovery metadata before integration is claimed.
 
-The CRM uses only:
+The public MCP advertises exactly:
 
 - `prism_v1_get_service_info`
 - `prism_v1_get_pipeline_run_summary`
@@ -38,6 +38,8 @@ The CRM uses only:
 - `prism_v1_get_property`
 - `prism_v1_get_permit`
 - `prism_v1_get_query_schema`
+
+The CRM transport may call all six validated tools. Its consuming AI agent uses the least-privilege workflow subset `prism_v1_search_roofing_opportunities`, `prism_v1_get_property`, and `prism_v1_get_permit`; service information, latest-run summary and query capabilities remain deterministic application/controller calls outside the model tool whitelist.
 
 The UI defaults to Pasco, supports browser GPS or pin center, validated miles/kilometres radius, direct/proxy roof-age basis, open/long-open permit filters, stable pagination, map/list browsing, evidence detail and lead conversion.
 

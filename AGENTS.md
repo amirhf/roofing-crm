@@ -19,7 +19,7 @@ Reference repositories and the Oracle assignment repository are read-only to the
 ## Model and deterministic behavior
 
 - Use Vercel AI SDK with server-side provider/gateway credentials.
-- Models may translate natural language into the six validated `prism_v1_*` inputs and summarize evidence-bearing results.
+- The public MCP advertises all six validated `prism_v1_*` tools. The CRM agent exposes only its least-privilege search/property/permit subset and summarizes evidence-bearing results; deterministic CRM code may use the remaining metadata/capability tools outside the model workflow.
 - Models must not calculate distance, roof age, permit duration, ownership duration, matching, sorting, filtering, or lead eligibility.
 - Models must not generate or submit SQL.
 - Every factual answer must preserve evidence returned by MCP.
@@ -43,3 +43,13 @@ Reference repositories and the Oracle assignment repository are read-only to the
 - Never mark an acceptance item proven without observable evidence recorded by the controller.
 - Do not edit acceptance outcomes or evaluator evidence status during implementation.
 - Do not commit credentials, local absolute paths, generated data or deployment secrets.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

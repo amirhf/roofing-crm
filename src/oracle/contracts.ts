@@ -97,14 +97,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function fixtureTypeFor(tool: OracleMcpToolName): string | undefined {
   switch (tool) {
+    case "prism_v1_get_service_info":
+      return "service-info-response";
+    case "prism_v1_get_pipeline_run_summary":
+      return "pipeline-run-summary-response";
     case "prism_v1_search_roofing_opportunities":
       return "search-response";
     case "prism_v1_get_property":
       return "property-response";
     case "prism_v1_get_permit":
       return "permit-response";
-    default:
-      return undefined;
+    case "prism_v1_get_query_schema":
+      return "query-schema-response";
   }
 }
 
@@ -112,7 +116,7 @@ function assertCommonResponse(tool: OracleMcpToolName, value: unknown): void {
   if (!isRecord(value) || typeof value.ok !== "boolean" || !isRecord(value.meta)) {
     throw new ContractValidationError(`${tool} response envelope`);
   }
-  if (value.meta.contractVersion !== "1.0.0") {
+  if (value.meta.contractVersion !== contractLock.contractVersion) {
     throw new ContractValidationError(`${tool} contract version`);
   }
   if (value.ok && !("data" in value)) {

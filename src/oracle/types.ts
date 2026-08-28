@@ -131,7 +131,7 @@ export interface Property {
 }
 
 export interface OracleResponseMeta {
-  readonly contractVersion: "1.0.0";
+  readonly contractVersion: "1.1.0";
   readonly schemaHash: string;
   readonly county: "pasco";
   readonly asOf: string;
@@ -140,7 +140,7 @@ export interface OracleResponseMeta {
 }
 
 export interface OracleErrorMeta {
-  readonly contractVersion: "1.0.0";
+  readonly contractVersion: "1.1.0";
   readonly schemaHash: string;
   readonly requestId: string;
 }

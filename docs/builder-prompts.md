@@ -12,8 +12,12 @@ evaluator evidence status. Report a conflict to the controller. Never modify
 the Oracle or reference repositories or inspect another candidate's work.
 
 Implement a public Pasco-default roofing lead CRM in this repository. Obtain
-all Oracle facts exclusively through ORACLE_MCP_URL and the six frozen
-prism_v1_* tools. Do not connect to Oracle PostgreSQL, Restate, DATA_DIR,
+all Oracle facts exclusively through ORACLE_MCP_URL and active MCP contract
+revision 1.1.0. The server advertises all six frozen prism_v1_* tools; expose
+only prism_v1_search_roofing_opportunities, prism_v1_get_property and
+prism_v1_get_permit to the AI agent as its least-privilege workflow subset.
+Use service information, pipeline summary and query capabilities only through
+deterministic application/controller paths. Do not connect to Oracle PostgreSQL, Restate, DATA_DIR,
 DuckDB/Parquet files, Filebase, IPFS, source portals, local artifacts or sibling
 paths. Do not ingest or recalculate Oracle facts.
 
