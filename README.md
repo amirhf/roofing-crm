@@ -2,7 +2,7 @@
 
 ## Context
 
-Roofing companies need a practical CRM for finding and qualifying residential and commercial roofing leads in their service area. The immediate requirement is a map-based CRM that helps sales teams explore local properties (Chester County, PA by default), surface roofs that are aging or have stalled open permits, and turn those signals into actionable outreach opportunities.
+Roofing companies need a practical CRM for finding and qualifying residential and commercial roofing leads in their service area. The immediate requirement is a map-based CRM that helps sales teams explore local properties, surface roofs that are aging or have stalled open permits, and turn those signals into actionable outreach opportunities.
 
 Data gathering and ingestion pipelines are covered by a separate user story and are **out of scope** for this work. This story assumes property, permit, and related enrichment data are already available for the UI and agent to consume.
 
@@ -10,10 +10,10 @@ Data gathering and ingestion pipelines are covered by a separate user story and 
 
 Create a map-based roofing lead CRM that enables users to locate properties from their current GPS position or a pin drop on the map, set a search radius, and review candidate roofs that meet lead criteria—primarily roof age (for example, older than 15 years) and open roofing permits (especially permits that have remained open for many years).
 
-The UI should present property and permit details, including contractor information and BBB rating scores where available. Users should also be able to query the platform in natural language through a RAG-backed agent to discover roofing opportunities (for example, “show me open roofing permits older than five years within five miles of West Chester”).
+The UI should present property and permit details, including contractor information and BBB rating scores where available. Users should also be able to query the platform in natural language through a RAG-backed agent to discover roofing opportunities (for example, “show me open roofing permits older than five years within five miles of [city xyz]”).
 
 ## Acceptance Criteria
-- Default the map and search experience to Chester County, PA, with support for exploring properties in the user’s selected area.
+- Default the map and search experience to a particular county, with support for exploring properties in the user’s selected area.
 - Allow users to center property search on current GPS location and/or a pin dropped on the map.
 - Allow users to set a configurable search radius around the selected location.
 - Display properties within the radius that have roofs older than a configurable age threshold (default suggestion: 15 years).
@@ -26,7 +26,7 @@ The UI should present property and permit details, including contractor informat
 - Show (disabled) sections on the CRM that would expand the product beyond the initial lead-identification workflow.
 
 ## Demo Transcript
-- Open the CRM centered on Chester County, PA.
+- Open the CRM centered on a particular county.
 - Drop a pin (or use GPS) and set a search radius.
 - Show roofs older than the age threshold (e.g., 15 years) within the radius.
 - Highlight properties with open roofing permits, prioritizing long-open permits.
