@@ -18,7 +18,8 @@ const completeResult: NaturalLanguageQueryResult = {
   status: "complete",
   grounded: {
     status: "grounded",
-    answer: `Oracle returned one validated property: ${property.propertyId}.`,
+    answer:
+      "Retrieved 1 validated Oracle property. Review the MCP-backed records and evidence below.",
     filters: {
       county: "pasco",
       center: { kind: "place", text: "Zephyrhills, Florida" },

@@ -4,6 +4,7 @@ import type {
   GetPropertyInput,
   JsonObject,
   NodeEnvironment,
+  OracleCallOptions,
   OracleClient,
   OracleMcpToolName,
   OracleMcpTransport,
@@ -35,41 +36,52 @@ export class ContractValidatingOracleClient implements OracleClient {
   private async call<T>(
     tool: OracleMcpToolName,
     input: Readonly<Record<string, unknown>>,
+    options?: OracleCallOptions,
   ): Promise<OracleResult<T>> {
-    const result = await this.transport.callTool(tool, input);
+    const result = await this.transport.callTool(tool, input, options);
     return validateOracleToolResult<T>(tool, result, this.nodeEnvironment);
   }
 
-  getServiceInfo(): Promise<OracleResult<JsonObject>> {
-    return this.call("prism_v1_get_service_info", {});
+  getServiceInfo(options?: OracleCallOptions): Promise<OracleResult<JsonObject>> {
+    return this.call("prism_v1_get_service_info", {}, options);
   }
 
-  getPipelineRunSummary(input: JsonObject = {}): Promise<OracleResult<JsonObject>> {
-    return this.call("prism_v1_get_pipeline_run_summary", input);
+  getPipelineRunSummary(
+    input: JsonObject = {},
+    options?: OracleCallOptions,
+  ): Promise<OracleResult<JsonObject>> {
+    return this.call("prism_v1_get_pipeline_run_summary", input, options);
   }
 
   searchRoofingOpportunities(
     input: SearchArguments,
+    options?: OracleCallOptions,
   ): Promise<OracleResult<SearchResultData>> {
     assertValidSearchArguments(input);
-    return this.call("prism_v1_search_roofing_opportunities", { ...input });
+    return this.call("prism_v1_search_roofing_opportunities", { ...input }, options);
   }
 
-  getProperty(input: GetPropertyInput): Promise<OracleResult<Property>> {
+  getProperty(
+    input: GetPropertyInput,
+    options?: OracleCallOptions,
+  ): Promise<OracleResult<Property>> {
     if (!PROPERTY_ID_PATTERN.test(input.propertyId)) {
       throw new OracleInputValidationError("propertyId");
     }
-    return this.call("prism_v1_get_property", { ...input });
+    return this.call("prism_v1_get_property", { ...input }, options);
   }
 
-  getPermit(input: GetPermitInput): Promise<OracleResult<Permit>> {
+  getPermit(
+    input: GetPermitInput,
+    options?: OracleCallOptions,
+  ): Promise<OracleResult<Permit>> {
     if (!PERMIT_ID_PATTERN.test(input.permitId)) {
       throw new OracleInputValidationError("permitId");
     }
-    return this.call("prism_v1_get_permit", { ...input });
+    return this.call("prism_v1_get_permit", { ...input }, options);
   }
 
-  getQuerySchema(): Promise<OracleResult<JsonObject>> {
-    return this.call("prism_v1_get_query_schema", {});
+  getQuerySchema(options?: OracleCallOptions): Promise<OracleResult<JsonObject>> {
+    return this.call("prism_v1_get_query_schema", {}, options);
   }
 }

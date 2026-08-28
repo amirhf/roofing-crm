@@ -239,20 +239,36 @@ export interface GetPermitInput {
   readonly permitId: PermitId;
 }
 
+export interface OracleCallOptions {
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}
+
 export interface OracleMcpTransport {
   callTool(
     tool: OracleMcpToolName,
     input: Readonly<Record<string, unknown>>,
+    options?: OracleCallOptions,
   ): Promise<unknown>;
 }
 
 export interface OracleClient {
-  getServiceInfo(): Promise<OracleResult<JsonObject>>;
-  getPipelineRunSummary(input?: JsonObject): Promise<OracleResult<JsonObject>>;
+  getServiceInfo(options?: OracleCallOptions): Promise<OracleResult<JsonObject>>;
+  getPipelineRunSummary(
+    input?: JsonObject,
+    options?: OracleCallOptions,
+  ): Promise<OracleResult<JsonObject>>;
   searchRoofingOpportunities(
     input: SearchArguments,
+    options?: OracleCallOptions,
   ): Promise<OracleResult<SearchResultData>>;
-  getProperty(input: GetPropertyInput): Promise<OracleResult<Property>>;
-  getPermit(input: GetPermitInput): Promise<OracleResult<Permit>>;
-  getQuerySchema(): Promise<OracleResult<JsonObject>>;
+  getProperty(
+    input: GetPropertyInput,
+    options?: OracleCallOptions,
+  ): Promise<OracleResult<Property>>;
+  getPermit(
+    input: GetPermitInput,
+    options?: OracleCallOptions,
+  ): Promise<OracleResult<Permit>>;
+  getQuerySchema(options?: OracleCallOptions): Promise<OracleResult<JsonObject>>;
 }

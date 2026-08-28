@@ -143,14 +143,12 @@ const groundingFailureSchema = z
       "unsupported_request",
       "insufficient_grounding",
     ]),
-    message: z.string().min(1).max(300),
   })
   .strict();
 
 export const agentModelOutputSchema = z
   .object({
     status: z.enum(["grounded", "cannot_ground"]),
-    answer: z.string().min(1).max(AGENT_BOUNDS.maxAnswerCharacters),
     filters: agentSearchArgumentsSchema.nullable(),
     propertyIds: z
       .array(propertyIdSchema)
@@ -176,6 +174,13 @@ export const agentModelOutputSchema = z
         message: "Grounded output cannot include a failure.",
       });
     }
+    if (output.status === "grounded" && output.propertyIds.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["propertyIds"],
+        message: "Grounded output requires at least one retrieved property.",
+      });
+    }
     if (output.status === "cannot_ground" && output.failure === null) {
       context.addIssue({
         code: "custom",
@@ -195,4 +200,5 @@ export type NaturalLanguageQueryRequest = z.infer<
   typeof naturalLanguageQueryRequestSchema
 >;
 export type AgentModelOutput = z.infer<typeof agentModelOutputSchema>;
+export type AgentFailureCode = z.infer<typeof groundingFailureSchema>["code"];
 export type MissingField = z.infer<typeof missingFieldSchema>;

@@ -1,15 +1,26 @@
 import type { Evidence, Property, SearchArguments } from "@/oracle/types";
 
 import type {
+  AgentFailureCode,
   AgentModelOutput,
   MissingField,
   NaturalLanguageQueryRequest,
 } from "./schemas";
 
-export type { AgentModelOutput, MissingField, NaturalLanguageQueryRequest };
+export type {
+  AgentFailureCode,
+  AgentModelOutput,
+  MissingField,
+  NaturalLanguageQueryRequest,
+};
 
-export interface GroundedNaturalLanguageResult extends AgentModelOutput {
+export interface GroundedNaturalLanguageResult extends Omit<AgentModelOutput, "failure"> {
   readonly status: "grounded" | "cannot_ground";
+  readonly answer: string;
+  readonly failure: Readonly<{
+    code: AgentFailureCode;
+    message: string;
+  }> | null;
   readonly filters: SearchArguments | null;
   readonly properties: readonly Property[];
   readonly evidence: readonly Evidence[];

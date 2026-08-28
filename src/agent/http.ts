@@ -1,5 +1,6 @@
 import "server-only";
 
+import { GatewayError } from "@ai-sdk/gateway";
 import type { AgentModelAdapter } from "./provider";
 import { z } from "zod";
 
@@ -17,6 +18,10 @@ import {
   ContractValidationError,
   OracleSchemaHashMismatchError,
 } from "@/oracle/contracts";
+import {
+  OracleMcpResponseSizeError,
+  OracleMcpTransportError,
+} from "@/oracle/mcp-transport";
 import { jsonResponse } from "@/server/request-context";
 import {
   assertSameOrigin,
@@ -60,13 +65,15 @@ function errorResult(
 const MAX_RETRY_AFTER_SECONDS = 300;
 
 interface GatewayTransportMetadata {
-  readonly statusCode: number | null;
+  readonly statusCode: number;
+  readonly type: string;
   readonly responseHeaders: unknown;
 }
 
-function gatewayTransportMetadata(error: unknown): GatewayTransportMetadata {
+function gatewayTransportMetadata(error: unknown): GatewayTransportMetadata | null {
   let current: unknown = error;
   let statusCode: number | null = null;
+  let type: string | null = null;
   let responseHeaders: unknown;
   const visited = new Set<unknown>();
 
@@ -77,12 +84,9 @@ function gatewayTransportMetadata(error: unknown): GatewayTransportMetadata {
   ) {
     if (visited.has(current)) break;
     visited.add(current);
-    if (
-      statusCode === null &&
-      "statusCode" in current &&
-      typeof current.statusCode === "number"
-    ) {
+    if (GatewayError.isInstance(current)) {
       statusCode = current.statusCode;
+      type = current.type;
     }
     if (responseHeaders === undefined && "responseHeaders" in current) {
       responseHeaders = current.responseHeaders;
@@ -90,7 +94,9 @@ function gatewayTransportMetadata(error: unknown): GatewayTransportMetadata {
     current = "cause" in current ? current.cause : null;
   }
 
-  return { statusCode, responseHeaders };
+  return statusCode === null || type === null
+    ? null
+    : { statusCode, type, responseHeaders };
 }
 
 function responseHeader(headers: unknown, name: string): string | null {
@@ -105,13 +111,22 @@ function boundedRetryAfterSeconds(headers: unknown): number | undefined {
   const value = responseHeader(headers, "retry-after")?.trim();
   if (!value) return undefined;
 
-  const deltaSeconds = Number(value);
-  if (Number.isFinite(deltaSeconds) && deltaSeconds >= 0) {
+  if (/^\d+$/.test(value)) {
+    const deltaSeconds = Number(value);
     return Math.min(MAX_RETRY_AFTER_SECONDS, Math.ceil(deltaSeconds));
   }
 
+  if (
+    !/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(
+      value,
+    )
+  ) {
+    return undefined;
+  }
   const retryAt = Date.parse(value);
-  if (!Number.isFinite(retryAt)) return undefined;
+  if (!Number.isFinite(retryAt) || new Date(retryAt).toUTCString() !== value) {
+    return undefined;
+  }
   return Math.min(
     MAX_RETRY_AFTER_SECONDS,
     Math.max(0, Math.ceil((retryAt - Date.now()) / 1_000)),
@@ -166,8 +181,32 @@ function classifiedError(error: unknown): {
   if (error instanceof Error && error.name === "AgentInvalidToolArgumentsError") {
     return { body: errorResult("invalid_tool_arguments", error.message), status: 422 };
   }
+  if (error instanceof OracleMcpResponseSizeError) {
+    return {
+      body: errorResult(
+        "invalid_mcp_response",
+        "Oracle returned data that failed the frozen contract or response bounds.",
+      ),
+      status: 502,
+    };
+  }
+  if (error instanceof OracleMcpTransportError) {
+    if (timeoutLike(error)) {
+      return {
+        body: errorResult(
+          "timeout",
+          "The grounded query exceeded its 12-second server deadline.",
+        ),
+        status: 504,
+      };
+    }
+    return {
+      body: errorResult("mcp_error", "Oracle MCP could not complete the request."),
+      status: 503,
+    };
+  }
   const gateway = gatewayTransportMetadata(error);
-  if (gateway.statusCode === 402) {
+  if (gateway?.statusCode === 402) {
     return {
       body: errorResult(
         "ai_budget_unavailable",
@@ -176,7 +215,7 @@ function classifiedError(error: unknown): {
       status: 402,
     };
   }
-  if (gateway.statusCode === 429) {
+  if (gateway?.statusCode === 429) {
     const retryAfterSeconds = boundedRetryAfterSeconds(gateway.responseHeaders);
     return {
       body: errorResult(
@@ -188,7 +227,7 @@ function classifiedError(error: unknown): {
       ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
     };
   }
-  if (gateway.statusCode === 503) {
+  if (gateway?.statusCode === 503) {
     return {
       body: errorResult(
         "ai_temporarily_unavailable",
@@ -197,7 +236,7 @@ function classifiedError(error: unknown): {
       status: 503,
     };
   }
-  if (gateway.statusCode === 401 || gateway.statusCode === 403) {
+  if (gateway?.statusCode === 401 || gateway?.statusCode === 403) {
     return {
       body: errorResult(
         "ai_authentication_failed",
@@ -206,11 +245,20 @@ function classifiedError(error: unknown): {
       status: 503,
     };
   }
-  if (gateway.statusCode === 400 || gateway.statusCode === 404) {
+  if (gateway?.type === "model_not_found") {
     return {
       body: errorResult(
         "ai_model_unavailable",
         "The configured AI model slug is malformed or unavailable.",
+      ),
+      status: 503,
+    };
+  }
+  if (gateway?.type === "invalid_request_error" || gateway?.statusCode === 400) {
+    return {
+      body: errorResult(
+        "ai_configuration_error",
+        "AI Gateway rejected the configured request.",
       ),
       status: 503,
     };

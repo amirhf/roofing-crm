@@ -21,6 +21,7 @@
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
+    "@ai-sdk/gateway": "4.0.68",
     "@fontsource-variable/fraunces": "5.3.0",
     "@fontsource-variable/manrope": "5.3.0",
     "@modelcontextprotocol/sdk": "1.30.0",

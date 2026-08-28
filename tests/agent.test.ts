@@ -3,7 +3,6 @@ import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 
 import errorFixture from "../contracts/fixtures/error-response.json";
-import searchFixture from "../contracts/fixtures/search-response.json";
 import {
   AgentGroundingError,
   AgentMcpError,
@@ -16,7 +15,6 @@ import { AGENT_BOUNDS } from "../src/agent/schemas";
 import type { AgentModelOutput, NaturalLanguageQueryRequest } from "../src/agent/types";
 import { DevelopmentFixtureOracleClient } from "../src/oracle/fixture-adapter";
 import type {
-  JsonObject,
   OracleClient,
   OracleResult,
   SearchArguments,
@@ -92,7 +90,6 @@ function finish(output: AgentModelOutput): LanguageModelV4GenerateResult {
 function groundedOutput(overrides: Partial<AgentModelOutput> = {}): AgentModelOutput {
   return {
     status: "grounded",
-    answer: `Oracle returned one validated property: ${propertyId}.`,
     filters: searchInput,
     propertyIds: [propertyId],
     evidenceRefs: [evidenceId],
@@ -144,10 +141,19 @@ describe("grounded natural-language agent", () => {
     });
 
     expect(search).toHaveBeenCalledOnce();
-    expect(search).toHaveBeenCalledWith(searchInput);
+    expect(search).toHaveBeenCalledWith(
+      searchInput,
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        timeoutMs: AGENT_BOUNDS.toolDeadlineMs,
+      }),
+    );
     expect(result.filters).toEqual(searchInput);
     expect(result.propertyIds).toEqual([propertyId]);
     expect(result.properties[0]?.propertyId).toBe(propertyId);
+    expect(result.answer).toBe(
+      "Retrieved 1 validated Oracle property. Review the MCP-backed records and evidence below.",
+    );
     expect(model.doGenerateCalls[0]?.tools?.map((entry) => entry.name)).toEqual(
       AGENT_ORACLE_TOOL_ALLOWLIST,
     );
@@ -246,7 +252,7 @@ describe("grounded natural-language agent", () => {
         ...searchInput,
         radius: { value: "eight", unit: "mi" },
       }),
-      finish(groundedOutput({ propertyIds: [], evidenceRefs: [] })),
+      finish(groundedOutput()),
     );
     await expect(
       runGroundedAgent({
@@ -310,14 +316,12 @@ describe("grounded natural-language agent", () => {
     const model = modelWith(
       finish({
         status: "cannot_ground",
-        answer: "That request is outside the read-only Oracle MCP boundary.",
         filters: null,
         propertyIds: [],
         evidenceRefs: [],
         missingFields: [],
         failure: {
           code: "unsupported_request",
-          message: "Direct storage and SQL access are not available.",
         },
       }),
     );
@@ -334,24 +338,96 @@ describe("grounded natural-language agent", () => {
     });
     expect(result.status).toBe("cannot_ground");
     expect(result.failure?.code).toBe("unsupported_request");
+    expect(result.answer).toBe(
+      "That request is outside the read-only Oracle MCP boundary.",
+    );
+    expect(result.answer).not.toMatch(/SELECT|Neon|DuckDB|Filebase|IPFS/i);
     expect(search).not.toHaveBeenCalled();
     expect(model.doGenerateCalls[0]?.tools?.map((entry) => entry.name)).toEqual(
       AGENT_ORACLE_TOOL_ALLOWLIST,
     );
   });
 
+  it.each([
+    {
+      name: "no_results without a search",
+      failureCode: "no_results",
+    },
+    {
+      name: "missing_data without validated unavailable fields",
+      failureCode: "missing_data",
+    },
+  ] as const)(
+    "rejects inconsistent model failure semantics: $name",
+    async ({ failureCode }) => {
+      const output: AgentModelOutput = {
+        status: "cannot_ground",
+        filters: null,
+        propertyIds: [],
+        evidenceRefs: [],
+        missingFields: [],
+        failure: { code: failureCode },
+      };
+      await expect(
+        runGroundedAgent({
+          model: modelWith(finish(output)),
+          oracleClient: fixtureOracle(),
+          nodeEnvironment: "test",
+          sessionIdHash,
+          request: queryRequest,
+        }),
+      ).rejects.toBeInstanceOf(AgentGroundingError);
+    },
+  );
+
+  it("rejects no_results when a validated search returned a property", async () => {
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      finish({
+        status: "cannot_ground",
+        filters: searchInput,
+        propertyIds: [],
+        evidenceRefs: [],
+        missingFields: [],
+        failure: { code: "no_results" },
+      }),
+    );
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: fixtureOracle(),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("rejects model-authored prose, invented facts, PII, and SQL", async () => {
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      finish({
+        ...groundedOutput(),
+        answer:
+          "Owner Jane Doe has a 999-year-old roof. SELECT * FROM owners at 123 Secret Lane.",
+      } as unknown as AgentModelOutput),
+    );
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: fixtureOracle(),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
   it("stops excessive tool calls at the deterministic tool-call bound", async () => {
-    const schemaResult: OracleResult<JsonObject> = {
-      ok: true,
-      data: { county: "pasco" },
-      meta: structuredClone(searchFixture.result.meta) as never,
-    };
-    const oracle: OracleClient = {
-      ...withSearchOverride((input) => fixtureOracle().searchRoofingOpportunities(input)),
-      getQuerySchema: vi.fn(async () => schemaResult),
-    };
+    const oracle = fixtureOracle();
+    const getProperty = vi.spyOn(oracle, "getProperty");
     const calls = Array.from({ length: 5 }, (_, index) =>
-      callTool("prism_v1_get_query_schema", {}, `schema-${index}`),
+      callTool("prism_v1_get_property", { propertyId }, `property-${index}`),
     );
     const model = modelWith(...calls, finish(groundedOutput()));
     await expect(
@@ -363,7 +439,7 @@ describe("grounded natural-language agent", () => {
         request: queryRequest,
       }),
     ).rejects.toBeInstanceOf(AgentToolLimitError);
-    expect(oracle.getQuerySchema).toHaveBeenCalledTimes(4);
+    expect(getProperty).toHaveBeenCalledTimes(4);
   });
 
   it("enforces the total request timeout", async () => {
@@ -395,6 +471,37 @@ describe("grounded natural-language agent", () => {
       (error: unknown) =>
         error instanceof Error &&
         /abort|timeout|timed out/i.test(error.name + error.message),
+    );
+  });
+
+  it("settles a hung MCP call at the tool deadline and passes its abort signal", async () => {
+    const search = vi.fn<OracleClient["searchRoofingOpportunities"]>(
+      async () => await new Promise<never>(() => undefined),
+    );
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", searchInput),
+    );
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: withSearchOverride(search),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+        bounds: {
+          ...AGENT_BOUNDS,
+          requestDeadlineMs: 100,
+          stepDeadlineMs: 100,
+          toolDeadlineMs: 20,
+        },
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof Error && /abort|timeout|timed out/i.test(error.name),
+    );
+    expect(search).toHaveBeenCalledWith(
+      searchInput,
+      expect.objectContaining({ signal: expect.any(AbortSignal), timeoutMs: 20 }),
     );
   });
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import searchRequestFixture from "../contracts/fixtures/search-request.json";
 import searchResponseFixture from "../contracts/fixtures/search-response.json";
@@ -8,6 +8,12 @@ import {
   OracleSchemaHashMismatchError,
   ProductionFixtureDataError,
 } from "../src/oracle/contracts";
+import {
+  createBoundedOracleFetch,
+  OracleMcpTransportError,
+  OracleMcpResponseSizeError,
+  StreamableHttpOracleMcpTransport,
+} from "../src/oracle/mcp-transport";
 import type { OracleMcpTransport, SearchArguments } from "../src/oracle/types";
 
 class StubTransport implements OracleMcpTransport {
@@ -60,5 +66,68 @@ describe("typed Oracle client boundary", () => {
     await expect(
       client.searchRoofingOpportunities(searchArguments),
     ).rejects.toBeInstanceOf(ProductionFixtureDataError);
+  });
+
+  it("rejects an oversized MCP response from Content-Length before parsing", async () => {
+    const boundedFetch = createBoundedOracleFetch(
+      async () =>
+        new Response("too large", {
+          headers: { "Content-Length": "9" },
+        }),
+      8,
+    );
+    await expect(boundedFetch("https://oracle.example.test/mcp")).rejects.toBeInstanceOf(
+      OracleMcpResponseSizeError,
+    );
+  });
+
+  it("stops an oversized streamed MCP response without Content-Length", async () => {
+    const boundedFetch = createBoundedOracleFetch(
+      async () => new Response("streamed response"),
+      8,
+    );
+    const response = await boundedFetch("https://oracle.example.test/mcp");
+    await expect(response.text()).rejects.toBeInstanceOf(OracleMcpResponseSizeError);
+  });
+
+  it("aborts an in-flight MCP transport fetch when the caller signal fires", async () => {
+    let resolveObservedAbort!: (signal: AbortSignal) => void;
+    const observedAbort = new Promise<AbortSignal>((resolve) => {
+      resolveObservedAbort = resolve;
+    });
+    const fetch = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) {
+            reject(new Error("MCP transport did not supply a fetch abort signal."));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              resolveObservedAbort(signal);
+              reject(new DOMException("MCP fetch aborted.", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    const transport = new StreamableHttpOracleMcpTransport(
+      new URL("https://oracle.example.test/mcp"),
+      fetch,
+    );
+    const controller = new AbortController();
+    const pending = transport.callTool(
+      "prism_v1_search_roofing_opportunities",
+      { ...searchArguments },
+      { signal: controller.signal, timeoutMs: 1_000 },
+    );
+
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    controller.abort();
+
+    await expect(pending).rejects.toBeInstanceOf(OracleMcpTransportError);
+    await expect(observedAbort).resolves.toMatchObject({ aborted: true });
   });
 });

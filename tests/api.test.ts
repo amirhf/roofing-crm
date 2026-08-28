@@ -2,7 +2,9 @@ import { APICallError } from "@ai-sdk/provider";
 import {
   GatewayAuthenticationError,
   GatewayInternalServerError,
+  GatewayInvalidRequestError,
   GatewayModelNotFoundError,
+  GatewayNotFoundError,
   GatewayRateLimitError,
   GatewayResponseError,
 } from "@ai-sdk/gateway";
@@ -20,6 +22,10 @@ import { resetLeadRepositoryForTests } from "../src/crm/repository-factory";
 import { AgentConfigurationError } from "../src/config/agent";
 import { loadApplicationRuntimeConfig } from "../src/config/runtime";
 import { DevelopmentFixtureOracleClient } from "../src/oracle/fixture-adapter";
+import {
+  OracleMcpResponseSizeError,
+  OracleMcpTransportError,
+} from "../src/oracle/mcp-transport";
 import type { SearchArguments } from "../src/oracle/types";
 
 const origin = "http://localhost:3000";
@@ -77,13 +83,14 @@ function apiCallFailure(
   });
 }
 
-function handlerFailingWith(error: Error) {
+function handlerFailingWith(error: Error, release?: () => void) {
   const config = configuredTestRuntime();
   const model = new MockLanguageModelV4();
   return createQueryPostHandler({
     loadConfig: () => config,
     createModel: () => ({ provider: "mock", modelId: "test/mock", model }),
     createOracle: () => new DevelopmentFixtureOracleClient("test"),
+    ...(release ? { acquireSession: () => release } : {}),
     runAgent: async () => {
       throw error;
     },
@@ -160,7 +167,6 @@ describe("server APIs", () => {
               type: "text",
               text: JSON.stringify({
                 status: "grounded",
-                answer: `Oracle returned ${property.propertyId}.`,
                 filters: input,
                 propertyIds: [property.propertyId],
                 evidenceRefs: [property.evidence[0]!.evidenceId],
@@ -175,11 +181,13 @@ describe("server APIs", () => {
         },
       ],
     });
+    const release = vi.fn();
     const config = configuredTestRuntime();
     const handler = createQueryPostHandler({
       loadConfig: () => config,
       createModel: () => ({ provider: "mock", modelId: "test/mock", model }),
       createOracle: () => new DevelopmentFixtureOracleClient("test"),
+      acquireSession: () => release,
     });
 
     const response = await handler(request("/api/query", "POST", queryInput));
@@ -203,6 +211,7 @@ describe("server APIs", () => {
     expect(attribution).not.toContain("roofline_session");
     expect(attribution).not.toContain(queryInput.query);
     expect(attribution).not.toContain("Pasco County, Florida");
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -242,6 +251,24 @@ describe("server APIs", () => {
       status: 503,
       code: "ai_model_unavailable",
     },
+    {
+      name: "Gateway invalid request",
+      error: new GatewayInvalidRequestError({
+        statusCode: 400,
+        cause: apiCallFailure(400),
+      }),
+      status: 503,
+      code: "ai_configuration_error",
+    },
+    {
+      name: "non-model Gateway route not found",
+      error: new GatewayNotFoundError({
+        statusCode: 404,
+        cause: apiCallFailure(404),
+      }),
+      status: 502,
+      code: "model_error",
+    },
   ] as const)("maps $name through the structured boundary", async (testCase) => {
     const response = await handlerFailingWith(testCase.error)(
       request("/api/query", "POST", queryInput),
@@ -253,19 +280,93 @@ describe("server APIs", () => {
     });
   });
 
-  it("maps HTTP 429 and preserves a bounded Retry-After", async () => {
-    const error = new GatewayRateLimitError({
-      cause: apiCallFailure(429, { "retry-after": "900" }),
+  it.each([
+    ["45", 45],
+    ["900", 300],
+    ["0x10", undefined],
+    ["1e2", undefined],
+    ["1.5", undefined],
+    ["not-a-date", undefined],
+  ] as const)(
+    "maps HTTP 429 and safely bounds Retry-After %s",
+    async (retryAfter, expectedSeconds) => {
+      const error = new GatewayRateLimitError({
+        cause: apiCallFailure(429, { "retry-after": retryAfter }),
+      });
+      const response = await handlerFailingWith(error)(
+        request("/api/query", "POST", queryInput),
+      );
+      expect(response.status).toBe(429);
+      expect(response.headers.get("retry-after")).toBe(
+        expectedSeconds === undefined ? null : String(expectedSeconds),
+      );
+      const payload = (await response.json()) as {
+        error: { code: string; retryAfterSeconds?: number };
+      };
+      expect(payload.error.code).toBe("ai_rate_limited");
+      expect(payload.error.retryAfterSeconds).toBe(expectedSeconds);
+    },
+  );
+
+  it("accepts a standard HTTP-date Retry-After and bounds it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-29T00:00:00.000Z"));
+    try {
+      const error = new GatewayRateLimitError({
+        cause: apiCallFailure(429, {
+          "retry-after": "Sat, 29 Aug 2026 00:10:00 GMT",
+        }),
+      });
+      const response = await handlerFailingWith(error)(
+        request("/api/query", "POST", queryInput),
+      );
+      expect(response.headers.get("retry-after")).toBe("300");
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: "ai_rate_limited", retryAfterSeconds: 300 },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps MCP transport failures out of Gateway error mapping and releases the gate", async () => {
+    const release = vi.fn();
+    const cause = Object.assign(new Error("upstream unavailable"), {
+      statusCode: 503,
     });
-    const response = await handlerFailingWith(error)(
-      request("/api/query", "POST", queryInput),
-    );
-    expect(response.status).toBe(429);
-    expect(response.headers.get("retry-after")).toBe("300");
+    const response = await handlerFailingWith(
+      new OracleMcpTransportError("Oracle MCP call failed.", { cause }),
+      release,
+    )(request("/api/query", "POST", queryInput));
+    expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
-      status: "error",
-      error: { code: "ai_rate_limited", retryAfterSeconds: 300 },
+      error: { code: "mcp_error" },
     });
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("maps a pre-parse oversized MCP response to the invalid-response boundary", async () => {
+    const response = await handlerFailingWith(
+      new OracleMcpResponseSizeError("Oracle MCP HTTP response was too large."),
+    )(request("/api/query", "POST", queryInput));
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "invalid_mcp_response" },
+    });
+  });
+
+  it("releases the process-local gate after a timeout", async () => {
+    const release = vi.fn();
+    const timeout = new DOMException("Tool timed out.", "TimeoutError");
+    const response = await handlerFailingWith(
+      timeout,
+      release,
+    )(request("/api/query", "POST", queryInput));
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "timeout" },
+    });
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("maps malformed model and missing agent configuration without a model call", async () => {
