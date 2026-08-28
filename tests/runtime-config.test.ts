@@ -14,6 +14,8 @@ const productionBase = {
   LEAD_REPOSITORY: "postgres",
   DATABASE_URL: "postgresql://user:pass@db.example.test/roofline",
   SESSION_SECRET: "0123456789abcdef0123456789abcdef",
+  AI_PROVIDER: "gateway",
+  AI_MODEL: "openai/gpt-5-mini",
 } as const;
 
 describe("application production isolation", () => {
@@ -24,6 +26,7 @@ describe("application production isolation", () => {
       databaseUrl: productionBase.DATABASE_URL,
       sessionSecret: productionBase.SESSION_SECRET,
       oracle: { dataSource: "mcp" },
+      agent: { configured: true, provider: "gateway" },
     });
   });
 
@@ -63,5 +66,36 @@ describe("application production isolation", () => {
         SESSION_SECRET: productionBase.SESSION_SECRET,
       }),
     ).toThrow(ApplicationConfigurationError);
+  });
+
+  it("keeps development honestly unconfigured but requires a production model", () => {
+    expect(
+      loadApplicationRuntimeConfig({
+        NODE_ENV: "development",
+        ORACLE_DATA_SOURCE: "fixtures",
+        LEAD_REPOSITORY: "memory",
+        SESSION_SECRET: productionBase.SESSION_SECRET,
+      }).agent,
+    ).toEqual({ configured: false, provider: null, modelId: null });
+
+    const environment: Record<string, string | undefined> = { ...productionBase };
+    delete environment.AI_MODEL;
+    expect(() => loadApplicationRuntimeConfig(environment)).toThrow(
+      /AI_PROVIDER and AI_MODEL/,
+    );
+  });
+
+  it.each([
+    "openai",
+    "openai/",
+    "/gpt-5-mini",
+    "OpenAI/gpt-5-mini",
+    "openai/GPT-5-mini",
+    "openai/gpt-5-mini/latest",
+    "openai/gpt-5-mini:latest",
+  ])("rejects a non-Gateway AI_MODEL slug: %s", (modelId) => {
+    expect(() =>
+      loadApplicationRuntimeConfig({ ...productionBase, AI_MODEL: modelId }),
+    ).toThrow(/lowercase provider\/model slug format/);
   });
 });

@@ -1,4 +1,24 @@
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
+
+const searchFixture = JSON.parse(
+  readFileSync(
+    new URL("../contracts/fixtures/search-response.json", import.meta.url),
+    "utf8",
+  ),
+) as {
+  result: {
+    data: {
+      opportunities: Array<{
+        property: {
+          propertyId: string;
+          evidence: Array<{ evidenceId: string }>;
+        };
+      }>;
+    };
+  };
+};
+const agentProperty = searchFixture.result.data.opportunities[0]!.property;
 
 test.beforeEach(async ({ page }) => {
   await page.route("https://*.tile.openstreetmap.org/**", (route) => route.abort());
@@ -123,4 +143,80 @@ test("keyboard controls and mobile layout remain usable", async ({ page }) => {
   );
   expect(hasHorizontalOverflow).toBe(false);
   await expect(page.getByRole("spinbutton", { name: "Radius miles" })).toBeVisible();
+});
+
+test("grounded query renders only validated MCP property and evidence records", async ({
+  page,
+}) => {
+  await page.route("**/api/query", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "complete",
+        grounded: {
+          status: "grounded",
+          answer: `Oracle returned one validated property: ${agentProperty.propertyId}.`,
+          filters: {
+            county: "pasco",
+            center: { kind: "place", text: "Zephyrhills, Florida" },
+            radius: { value: 8, unit: "mi" },
+            filters: {
+              roofAge: { operator: "gte", years: 18, basis: "direct_or_proxy" },
+              permit: { roofingOnly: true, openOnly: true, minOpenDays: 45 },
+            },
+            sort: "distance_asc",
+            page: { limit: 10 },
+          },
+          propertyIds: [agentProperty.propertyId],
+          evidenceRefs: [agentProperty.evidence[0]!.evidenceId],
+          missingFields: [
+            {
+              propertyId: agentProperty.propertyId,
+              permitId: null,
+              field: "bbbRating",
+              reason: "no_permit_record_returned",
+            },
+          ],
+          failure: null,
+          properties: [agentProperty],
+          evidence: [agentProperty.evidence[0]],
+        },
+      }),
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: /Query/ }).click();
+  await page
+    .getByLabel("Natural-language request")
+    .fill("Find older roofs near Zephyrhills with long-open permits");
+  await page.getByRole("button", { name: "Run grounded query" }).click();
+
+  await expect(page.getByText("Grounding proven")).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "100 TEST WAY, FIXTURE ZEPHYRHILLS, FL 33540",
+    }),
+  ).toBeVisible();
+  await expect(page.getByText("ev_fixture_appraiser_001")).toBeVisible();
+  await expect(page.getByText("bbbRating")).toBeVisible();
+  await page.getByText("Exact MCP search input").click();
+  await expect(page.locator("pre")).toContainText('"minOpenDays": 45');
+});
+
+test("query interface is keyboard-usable and honest when no model is configured", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("button", { name: /Query/ }).click();
+  const input = page.getByLabel("Natural-language request");
+  await input.fill("Show me older roofs");
+  await input.press("Control+Enter");
+  await expect(page.getByText("Model not configured")).toBeVisible();
+  await expect(page.getByRole("status")).toBeFocused();
+  const hasHorizontalOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(hasHorizontalOverflow).toBe(false);
 });

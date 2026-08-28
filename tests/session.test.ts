@@ -6,6 +6,8 @@ import {
   resolveAnonymousSession,
   SameOriginError,
 } from "../src/server/session";
+import { acquireAgentSession } from "../src/agent/session-gate";
+import { AgentBusyError } from "../src/agent/errors";
 
 const secret = "0123456789abcdef0123456789abcdef";
 const now = new Date("2026-08-28T10:00:00.000Z");
@@ -62,5 +64,15 @@ describe("anonymous session boundary", () => {
         }),
       ),
     ).toThrow(SameOriginError);
+  });
+
+  it("allows only one active agent request per hashed browser session", () => {
+    const release = acquireAgentSession("sha256:session-a");
+    expect(() => acquireAgentSession("sha256:session-a")).toThrow(AgentBusyError);
+    const releaseOther = acquireAgentSession("sha256:session-b");
+    releaseOther();
+    release();
+    const releaseAgain = acquireAgentSession("sha256:session-a");
+    releaseAgain();
   });
 });

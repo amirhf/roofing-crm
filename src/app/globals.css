@@ -851,20 +851,323 @@ textarea {
 }
 .query-workspace {
   display: grid;
-  place-items: center;
+  grid-template-columns: minmax(250px, 0.56fr) minmax(440px, 1fr);
+  align-content: start;
+  gap: clamp(28px, 5vw, 72px);
+  background:
+    linear-gradient(90deg, transparent 49.9%, rgb(23 77 59 / 7%) 50%, transparent 50.1%),
+    var(--paper);
 }
-.query-card {
-  width: min(680px, 100%);
-  padding: clamp(28px, 5vw, 54px);
+.query-intro {
+  position: sticky;
+  top: 44px;
+  align-self: start;
+  max-width: 470px;
+}
+.query-intro h1 {
+  max-width: 430px;
+  margin: 0;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: clamp(42px, 5.6vw, 76px);
+  font-weight: 620;
+  line-height: 0.95;
+  letter-spacing: -0.052em;
+}
+.query-intro > p:not(.eyebrow) {
+  max-width: 430px;
+  margin: 24px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.75;
+}
+.agent-boundary-list {
+  display: grid;
+  gap: 0;
+  margin: 38px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.agent-boundary-list li {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 10px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+.agent-boundary-list span {
+  color: var(--rust);
+  font-size: 9px;
+  font-weight: 900;
+}
+.query-console {
+  align-self: start;
+  min-width: 0;
+  padding: clamp(24px, 4vw, 44px);
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: var(--shadow);
 }
-.query-card textarea:disabled {
-  background: #eeece5;
+.query-console form > label {
+  display: block;
+  margin-bottom: 9px;
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
-.query-card .primary-button {
-  margin-top: 18px;
+.query-console textarea {
+  min-height: 166px;
+  border: 0;
+  border-top: 2px solid var(--green);
+  border-bottom: 1px solid var(--line);
+  padding: 18px 2px;
+  background: transparent;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: clamp(18px, 2vw, 25px);
+  line-height: 1.38;
+}
+.query-console textarea::placeholder {
+  color: #9a9d94;
+}
+.query-meta,
+.query-actions,
+.agent-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.query-meta {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 9px;
+}
+.query-actions {
+  justify-content: flex-start;
+  margin-top: 22px;
+}
+.agent-status {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  gap: 13px;
+  margin-top: 25px;
+  padding: 16px 0 0;
+  border-top: 1px solid var(--line);
+}
+.agent-status-mark {
+  width: 10px;
+  height: 10px;
+  margin-top: 3px;
+  border: 2px solid var(--green);
+  border-radius: 50%;
+}
+.agent-status.loading .agent-status-mark {
+  border-right-color: transparent;
+  animation: spin 0.8s linear infinite;
+}
+.agent-status.error .agent-status-mark,
+.agent-status.not_configured .agent-status-mark {
+  border-color: var(--rust);
+  background: var(--rust);
+}
+.agent-status strong {
+  display: block;
+  font-size: 11px;
+}
+.agent-status p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+.agent-result {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border-top: 1px solid var(--green);
+  padding-top: clamp(26px, 4vw, 48px);
+}
+.agent-answer {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.32fr) minmax(0, 1fr);
+  gap: 24px;
+}
+.agent-answer h2 {
+  max-width: 850px;
+  margin: 0;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: clamp(26px, 4vw, 44px);
+  font-weight: 600;
+  line-height: 1.12;
+}
+.agent-failure {
+  grid-column: 2;
+  margin: -12px 0 0;
+  color: var(--warning);
+  font-size: 11px;
+}
+.agent-filter-proof {
+  margin-top: 30px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.agent-filter-proof summary {
+  padding: 13px 16px;
+  color: var(--green);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.agent-filter-proof pre,
+.agent-filter-proof p {
+  max-height: 360px;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: #ecebe4;
+  font-size: 10px;
+  line-height: 1.55;
+}
+.agent-records {
+  margin-top: 42px;
+}
+.agent-section-heading {
+  margin-bottom: 12px;
+}
+.agent-section-heading h2,
+.agent-proof-grid h2 {
+  margin: 0;
+  color: var(--green);
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: 20px;
+}
+.agent-section-heading span {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  background: var(--green);
+  color: white;
+  font-size: 10px;
+  font-weight: 850;
+}
+.agent-property-card {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.5fr) minmax(300px, 1fr);
+  gap: clamp(20px, 4vw, 46px);
+  margin-top: 10px;
+  padding: clamp(22px, 4vw, 38px);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.agent-property-card h3 {
+  margin: 0;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: 23px;
+  line-height: 1.14;
+}
+.agent-fact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin: 0;
+  background: var(--line);
+}
+.agent-fact-grid > div {
+  min-width: 0;
+  padding: 12px;
+  background: var(--surface);
+}
+.agent-fact-grid dt {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.agent-fact-grid dd {
+  margin: 5px 0 0;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.45;
+  text-transform: capitalize;
+}
+.agent-permit-list,
+.agent-evidence-list,
+.agent-missing-list {
+  grid-column: 2;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-permit-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 9px;
+}
+.agent-property-card > .agent-unavailable {
+  grid-column: 2;
+}
+.agent-unavailable {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+  background: #ece9e1;
+  font-size: 10px;
+  line-height: 1.55;
+}
+.agent-proof-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin-top: 34px;
+  background: var(--line);
+}
+.agent-proof-grid > section {
+  min-width: 0;
+  padding: clamp(20px, 3vw, 30px);
+  background: var(--surface);
+}
+.agent-proof-grid h2 {
+  margin-bottom: 14px;
+}
+.agent-evidence-list li,
+.agent-missing-list li {
+  display: grid;
+  gap: 4px;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.agent-evidence-list strong,
+.agent-missing-list strong {
+  font-size: 10px;
+}
+.agent-evidence-list span,
+.agent-missing-list span,
+.agent-evidence-list small,
+.agent-evidence-list a {
+  color: var(--muted);
+  font-size: 9px;
+}
+.agent-evidence-list a {
+  color: var(--green);
+  font-weight: 800;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 1280px) {
@@ -956,6 +1259,30 @@ textarea {
     min-height: calc(100vh - 70px);
     padding: 26px 16px;
   }
+  .query-workspace {
+    grid-template-columns: 1fr;
+    background: var(--paper);
+  }
+  .query-intro {
+    position: static;
+  }
+  .query-intro h1 {
+    max-width: 620px;
+    font-size: clamp(39px, 10vw, 62px);
+  }
+  .agent-boundary-list {
+    margin-top: 24px;
+  }
+  .agent-result {
+    grid-column: auto;
+  }
+  .agent-property-card {
+    grid-template-columns: 1fr;
+  }
+  .agent-permit-list,
+  .agent-property-card > .agent-unavailable {
+    grid-column: auto;
+  }
   .lead-grid {
     grid-template-columns: 1fr;
   }
@@ -1002,5 +1329,22 @@ textarea {
   .lead-editor,
   .query-card {
     padding: 22px 18px;
+  }
+  .query-console {
+    padding: 22px 18px;
+  }
+  .agent-answer,
+  .agent-proof-grid {
+    grid-template-columns: 1fr;
+  }
+  .agent-failure {
+    grid-column: auto;
+    margin-top: 0;
+  }
+  .agent-fact-grid {
+    grid-template-columns: 1fr;
+  }
+  .agent-permit-row {
+    grid-template-columns: 1fr 1fr;
   }
 }

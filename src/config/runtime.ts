@@ -1,11 +1,13 @@
 import type { NodeEnvironment } from "@/oracle/types";
 
+import { loadAgentRuntimeConfig, type AgentRuntimeConfig } from "./agent";
 import { loadOracleRuntimeConfig, type OracleRuntimeConfig } from "./oracle";
 
 export type LeadRepositoryKind = "memory" | "postgres";
 
 export interface ApplicationRuntimeConfig {
   readonly nodeEnvironment: NodeEnvironment;
+  readonly agent: AgentRuntimeConfig;
   readonly oracle: OracleRuntimeConfig;
   readonly leadRepository: LeadRepositoryKind;
   readonly databaseUrl: string | null;
@@ -80,6 +82,7 @@ export function loadApplicationRuntimeConfig(
 
   return {
     nodeEnvironment: oracle.nodeEnvironment,
+    agent: loadAgentRuntimeConfig(oracle.nodeEnvironment, environment),
     oracle,
     leadRepository,
     databaseUrl: parseDatabaseUrl(
