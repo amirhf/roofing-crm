@@ -73,6 +73,34 @@ export interface Contractor {
   readonly licenseNumber: string | null;
 }
 
+export interface OwnerDisplayName {
+  readonly displayName: string;
+  readonly evidenceRefs: readonly string[];
+}
+
+export interface PublicMailingAddress {
+  readonly addressLines: Fact<readonly string[]>;
+  readonly locality: Fact<string>;
+  readonly region: Fact<string>;
+  readonly postalCode: Fact<string>;
+  readonly country: Fact<string>;
+}
+
+export interface OwnerContactPrivacy {
+  readonly recordNature: "official_public_record";
+  readonly publicationStatus: "approved_for_publication";
+  readonly accuracyQualification: "source_reported_not_independently_verified";
+}
+
+export interface PublicOwnership {
+  readonly currentOwners: Fact<readonly OwnerDisplayName[]>;
+  readonly classification: Fact<string>;
+  readonly publicMailingAddress: Fact<PublicMailingAddress>;
+  readonly phone: Fact<string>;
+  readonly email: Fact<string>;
+  readonly privacy: OwnerContactPrivacy;
+}
+
 export interface Evidence {
   readonly evidenceId: string;
   readonly sourceSystem: string;
@@ -123,6 +151,7 @@ export interface Property {
   readonly roofAgeSignal: Fact<RoofAgeSignal>;
   readonly ownershipDurationYears: Fact<number>;
   readonly ownerArea: Fact<string>;
+  readonly ownership: PublicOwnership;
   readonly openRoofingPermitCount: Fact<number>;
   readonly maximumOpenRoofingPermitDays: Fact<number>;
   readonly permits: readonly Permit[];
@@ -131,7 +160,7 @@ export interface Property {
 }
 
 export interface OracleResponseMeta {
-  readonly contractVersion: "1.1.0";
+  readonly contractVersion: "1.2.0";
   readonly schemaHash: string;
   readonly county: "pasco";
   readonly asOf: string;
@@ -140,7 +169,7 @@ export interface OracleResponseMeta {
 }
 
 export interface OracleErrorMeta {
-  readonly contractVersion: "1.1.0";
+  readonly contractVersion: "1.2.0";
   readonly schemaHash: string;
   readonly requestId: string;
 }

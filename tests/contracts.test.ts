@@ -43,6 +43,20 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+function record(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Expected a fixture object.");
+  }
+  return value as Record<string, unknown>;
+}
+
+function mutablePropertyFixture() {
+  const fixture: unknown = clone(propertyFixture);
+  const result = record(record(fixture).result);
+  const data = record(result.data);
+  return { data, fixture, ownership: record(data.ownership) };
+}
+
 async function sha256(relativePath: string): Promise<string> {
   const bytes = await readFile(new URL(`../${relativePath}`, import.meta.url));
   return createHash("sha256").update(bytes).digest("hex");
@@ -75,6 +89,89 @@ describe("frozen MCP contract", () => {
     const invalid = clone(permitFixture);
     invalid.result.data.evidence[0]!.sourceArtifactUri = "not a uri";
     expect(() => assertValidMcpFixture(invalid)).toThrow(ContractValidationError);
+  });
+
+  it("rejects an empty available current-owner list", () => {
+    const { fixture, ownership } = mutablePropertyFixture();
+    record(ownership.currentOwners).value = [];
+    expect(() => assertValidMcpFixture(fixture)).toThrow(ContractValidationError);
+  });
+
+  it("rejects an available owner name without resolving provenance", () => {
+    const { fixture, ownership } = mutablePropertyFixture();
+    const owners = record(ownership.currentOwners).value;
+    if (!Array.isArray(owners)) throw new TypeError("Expected owner values.");
+    record(owners[0]).evidenceRefs = ["ev_missing_owner_source"];
+    expect(() => assertValidMcpFixture(fixture)).toThrow(ContractValidationError);
+  });
+
+  it("rejects inferred ownership classification", () => {
+    const { fixture, ownership } = mutablePropertyFixture();
+    ownership.classification = {
+      availability: "available",
+      value: "individual",
+      class: "inferred",
+      evidenceRefs: ["ev_fixture_appraiser_001"],
+    };
+    expect(() => assertValidMcpFixture(fixture)).toThrow(ContractValidationError);
+  });
+
+  it("rejects empty mailing lines and situs substitution", () => {
+    const empty = mutablePropertyFixture();
+    const emptyMailing = record(empty.ownership.publicMailingAddress);
+    record(record(emptyMailing.value).addressLines).value = [];
+    expect(() => assertValidMcpFixture(empty.fixture)).toThrow(ContractValidationError);
+
+    const substituted = mutablePropertyFixture();
+    record(substituted.data.address).value =
+      "900 EXAMPLE RECORD AVENUE, SAMPLEVILLE, FL 00000, US";
+    expect(() => assertValidMcpFixture(substituted.fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("rejects invented unavailable contacts and malformed available email", () => {
+    const invented = mutablePropertyFixture();
+    record(invented.ownership.phone).value = "+1-555-0100";
+    expect(() => assertValidMcpFixture(invented.fixture)).toThrow(
+      ContractValidationError,
+    );
+
+    const malformed = mutablePropertyFixture();
+    malformed.ownership.email = {
+      availability: "available",
+      value: "not-an-email",
+      class: "raw",
+      evidenceRefs: ["ev_fixture_appraiser_001"],
+    };
+    expect(() => assertValidMcpFixture(malformed.fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("rejects extra ownership fields and altered privacy metadata", () => {
+    const extra = mutablePropertyFixture();
+    extra.ownership.acquisitionDate = "2020-01-01";
+    expect(() => assertValidMcpFixture(extra.fixture)).toThrow(ContractValidationError);
+
+    const privateFixture = mutablePropertyFixture();
+    record(privateFixture.ownership.privacy).publicationStatus = "private";
+    expect(() => assertValidMcpFixture(privateFixture.fixture)).toThrow(
+      ContractValidationError,
+    );
+  });
+
+  it("accepts fictional owners with explicitly unavailable phone and email", () => {
+    const { fixture, ownership } = mutablePropertyFixture();
+    expect(record(ownership.phone)).toMatchObject({
+      availability: "unavailable",
+      value: null,
+    });
+    expect(record(ownership.email)).toMatchObject({
+      availability: "unavailable",
+      value: null,
+    });
+    expect(() => assertValidMcpFixture(fixture)).not.toThrow();
   });
 
   it("rejects a non-boolean retryable flag", () => {

@@ -11,6 +11,7 @@ Reference repositories and the Oracle assignment repository are read-only to the
 ## Oracle access boundary
 
 - All Oracle facts come exclusively from the public structured MCP configured by `ORACLE_MCP_URL`.
+- The active MCP revision is `1.2.0`; approved official-public-record owner/contact facts remain evidence-backed, explicitly unavailable when absent, and are never treated as independently verified.
 - Never access Oracle PostgreSQL, Restate, `DATA_DIR`, DuckDB/Parquet files, Filebase, IPFS, source portals, local artifacts, or sibling repository paths for Oracle facts.
 - Never ingest, scrape, repair, enrich, or republish Oracle facts from this repository.
 - The CRM owns only anonymous demo-session state and CRM lead lifecycle state.

@@ -28,7 +28,7 @@ The normative lead shape is `contracts/crm-lead-v1.schema.json`. A lead stores i
 
 ## Oracle retrieval and interface
 
-The committed `contracts/mcp-v1.schema.json` is byte-identical to Oracle’s. Active v1-family revision `1.1.0` supersedes the committed `1.0.0` schema with SHA-256 `714ee037ffca1362870a5135328a783bfe4a0161e7136e09d4d1590894211de7`; both the active hash and superseded historical evidence are recorded in `contracts/contract-lock.json`. The active hash must match live MCP discovery metadata before integration is claimed.
+The committed `contracts/mcp-v1.schema.json` is byte-identical to Oracle’s. Active v1-family revision `1.2.0` supersedes the committed `1.1.0` schema with SHA-256 `1ef6f43072bc93ee8557aa9fcd0ce55eab26560fe4d061fac7c9388b2d0301c5`; the `1.1.0` and `1.0.0` hashes and source commits remain recorded in `contracts/contract-lock.json`. The active hash must match live MCP discovery metadata before integration is claimed.
 
 The public MCP advertises exactly:
 
@@ -42,6 +42,8 @@ The public MCP advertises exactly:
 The CRM transport may call all six validated tools. Its consuming AI agent uses the least-privilege workflow subset `prism_v1_search_roofing_opportunities`, `prism_v1_get_property`, and `prism_v1_get_permit`; service information, latest-run summary and query capabilities remain deterministic application/controller calls outside the model tool whitelist.
 
 The UI defaults to Pasco, supports browser GPS or pin center, validated miles/kilometres radius, direct/proxy roof-age basis, open/long-open permit filters, stable pagination, map/list browsing, evidence detail and lead conversion.
+
+MCP v1.2 Property ownership fields distinguish current-owner display names, source-backed classification, public mailing address, phone and email from the situs `address`, `ownerArea` and `ownershipDurationYears`. Only approved official-public-record values with resolving provenance are available; absent phone/email and other missing facts remain explicitly unavailable, and the publication qualification does not imply independently verified correctness.
 
 The MCP is public and read-only. There is no evaluator token. AI and Neon credentials remain server-side.
 

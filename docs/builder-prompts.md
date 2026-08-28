@@ -13,7 +13,7 @@ the Oracle or reference repositories or inspect another candidate's work.
 
 Implement a public Pasco-default roofing lead CRM in this repository. Obtain
 all Oracle facts exclusively through ORACLE_MCP_URL and active MCP contract
-revision 1.1.0. The server advertises all six frozen prism_v1_* tools; expose
+revision 1.2.0. The server advertises all six frozen prism_v1_* tools; expose
 only prism_v1_search_roofing_opportunities, prism_v1_get_property and
 prism_v1_get_permit to the AI agent as its least-privilege workflow subset.
 Use service information, pipeline summary and query capabilities only through
@@ -49,6 +49,11 @@ fails explicitly. AI failure leaves deterministic search and lead management
 usable. Missing Oracle data stays explicitly unavailable. Production rejects
 fixture sources, known fixture IDs and fixture:// evidence and never falls back
 to fixtures.
+
+Consume strict v1.2 ownership/contact fields without substituting the situs
+address for public mailing or reinterpreting ownerArea. Preserve evidence and
+explicit unavailable phone/email states, and present official-public-record
+publication metadata without implying independent verification or correctness.
 
 Run implementation tests and collect raw verification outputs in a separate
 work area for controller review. Do not edit ACCEPTANCE.md outcomes or

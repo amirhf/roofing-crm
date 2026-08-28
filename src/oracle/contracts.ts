@@ -78,6 +78,7 @@ export function assertValidMcpFixture(value: unknown): void {
       cloneErrors(validateFixture.errors),
     );
   }
+  assertOwnershipSemantics(value, "frozen MCP fixture");
 }
 
 export function assertValidSearchArguments(
@@ -93,6 +94,126 @@ export function assertValidSearchArguments(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function semanticError(instancePath: string, keyword: string): ErrorObject {
+  return {
+    instancePath,
+    schemaPath: `#/$semantic/${keyword}`,
+    keyword,
+    params: {},
+    message: "violates the MCP ownership publication semantics",
+  };
+}
+
+function normalizeAddress(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function propertyRecords(
+  value: unknown,
+): Array<{ path: string; property: Record<string, unknown> }> {
+  if (!isRecord(value) || !isRecord(value.result) || !isRecord(value.result.data)) {
+    return [];
+  }
+  if (value.fixtureType === "property-response") {
+    return [{ path: "/result/data", property: value.result.data }];
+  }
+  if (value.fixtureType !== "search-response") return [];
+  const opportunities = value.result.data.opportunities;
+  if (!Array.isArray(opportunities)) return [];
+  return opportunities.flatMap((opportunity, index) =>
+    isRecord(opportunity) && isRecord(opportunity.property)
+      ? [
+          {
+            path: `/result/data/opportunities/${index}/property`,
+            property: opportunity.property,
+          },
+        ]
+      : [],
+  );
+}
+
+function ownershipSemanticErrors(value: unknown): ErrorObject[] {
+  const errors: ErrorObject[] = [];
+  for (const { path, property } of propertyRecords(value)) {
+    if (!isRecord(property.ownership)) continue;
+    const evidenceIds = new Set(
+      Array.isArray(property.evidence)
+        ? property.evidence.flatMap((evidence) =>
+            isRecord(evidence) && typeof evidence.evidenceId === "string"
+              ? [evidence.evidenceId]
+              : [],
+          )
+        : [],
+    );
+    const visit = (entry: unknown, entryPath: string): void => {
+      if (Array.isArray(entry)) {
+        entry.forEach((child, index) => visit(child, `${entryPath}/${index}`));
+        return;
+      }
+      if (!isRecord(entry)) return;
+      if (Array.isArray(entry.evidenceRefs)) {
+        for (const reference of entry.evidenceRefs) {
+          if (typeof reference === "string" && !evidenceIds.has(reference)) {
+            errors.push(semanticError(`${entryPath}/evidenceRefs`, "evidenceReference"));
+            break;
+          }
+        }
+      }
+      Object.entries(entry).forEach(([key, child]) =>
+        visit(child, `${entryPath}/${key}`),
+      );
+    };
+    visit(property.ownership, `${path}/ownership`);
+
+    const situs = isRecord(property.address) ? property.address.value : undefined;
+    const mailing = isRecord(property.ownership.publicMailingAddress)
+      ? property.ownership.publicMailingAddress
+      : undefined;
+    if (
+      typeof situs !== "string" ||
+      mailing?.availability !== "available" ||
+      !isRecord(mailing.value)
+    ) {
+      continue;
+    }
+    const mailingValue = mailing.value;
+    const componentValue = (name: string): unknown => {
+      const fact = mailingValue[name];
+      return isRecord(fact) && fact.availability === "available" ? fact.value : undefined;
+    };
+    const addressLines = componentValue("addressLines");
+    const lineText = Array.isArray(addressLines)
+      ? addressLines.filter((line): line is string => typeof line === "string").join(" ")
+      : "";
+    const fullMailing = [
+      lineText,
+      componentValue("locality"),
+      componentValue("region"),
+      componentValue("postalCode"),
+      componentValue("country"),
+    ]
+      .filter((component): component is string => typeof component === "string")
+      .join(" ");
+    const normalizedSitus = normalizeAddress(situs);
+    if (
+      normalizedSitus.length > 0 &&
+      [lineText, fullMailing].some(
+        (candidate) => normalizeAddress(candidate) === normalizedSitus,
+      )
+    ) {
+      errors.push(
+        semanticError(`${path}/ownership/publicMailingAddress`, "situsMailingDistinct"),
+      );
+    }
+  }
+  return errors;
+}
+
+function assertOwnershipSemantics(value: unknown, scope: string): void {
+  const errors = ownershipSemanticErrors(value);
+  if (errors.length > 0) throw new ContractValidationError(scope, errors);
 }
 
 function fixtureTypeFor(tool: OracleMcpToolName): string | undefined {
@@ -182,6 +303,7 @@ export function validateOracleToolResult<T>(
         cloneErrors(validateFixture.errors),
       );
     }
+    assertOwnershipSemantics(wrapper, `${tool} response`);
   }
 
   assertExpectedSchemaHash(value);
