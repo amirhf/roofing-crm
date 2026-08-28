@@ -1,0 +1,10 @@
+.next
+coverage
+node_modules
+package-lock.json
+contracts
+ACCEPTANCE.md
+AGENTS.md
+ARCHITECTURE.md
+README.md
+docs
