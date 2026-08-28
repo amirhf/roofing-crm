@@ -1,7 +1,7 @@
-import { loadOracleRuntimeConfig } from "@/config/oracle";
+import { loadApplicationRuntimeConfig } from "@/config/runtime";
 
 export function register(): void {
   if (process.env.NODE_ENV === "production") {
-    loadOracleRuntimeConfig(process.env);
+    loadApplicationRuntimeConfig(process.env);
   }
 }

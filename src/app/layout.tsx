@@ -2,6 +2,7 @@ import "@fontsource-variable/fraunces";
 import "@fontsource-variable/manrope";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import "leaflet/dist/leaflet.css";
 
 import "./globals.css";
 
