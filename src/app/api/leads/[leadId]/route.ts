@@ -1,4 +1,9 @@
 import { LeadInputError, parseUpdateLeadInput, updateLead } from "@/crm/service";
+import {
+  createRequestId,
+  recordServerError,
+  sanitizedErrorClass,
+} from "@/server/error-telemetry";
 import { createLeadRequestContext, jsonResponse } from "@/server/request-context";
 import { assertSameOrigin, SameOriginError } from "@/server/session";
 
@@ -9,7 +14,19 @@ interface RouteContext {
   readonly params: Promise<{ leadId: string }>;
 }
 
+function reportLeadError(operation: string, error: unknown, startedAt: number): string {
+  const requestId = createRequestId();
+  recordServerError({
+    requestId,
+    operation,
+    errorClass: sanitizedErrorClass(error),
+    latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+  });
+  return requestId;
+}
+
 export async function GET(request: Request, context: RouteContext): Promise<Response> {
+  const startedAt = performance.now();
   try {
     const { leadId } = await context.params;
     const { repository, session } = createLeadRequestContext(request);
@@ -23,15 +40,22 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
     }
     return jsonResponse({ lead }, {}, session.setCookieHeader);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to load lead.";
+    const requestId = reportLeadError("lead_read", error, startedAt);
     return jsonResponse(
-      { error: { code: "lead_store_error", message } },
+      {
+        error: {
+          code: "lead_store_error",
+          message: "Lead storage is temporarily unavailable.",
+          requestId,
+        },
+      },
       { status: 500 },
     );
   }
 }
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
+  const startedAt = performance.now();
   try {
     assertSameOrigin(request);
     const input = parseUpdateLeadInput(await request.json());
@@ -53,9 +77,15 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
         { status: 400 },
       );
     }
-    const message = error instanceof Error ? error.message : "Unable to update lead.";
+    const requestId = reportLeadError("lead_update", error, startedAt);
     return jsonResponse(
-      { error: { code: "lead_store_error", message } },
+      {
+        error: {
+          code: "lead_store_error",
+          message: "Lead storage is temporarily unavailable.",
+          requestId,
+        },
+      },
       { status: 500 },
     );
   }

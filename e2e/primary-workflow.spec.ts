@@ -1,23 +1,19 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
+import type {
+  OracleSuccess,
+  PropertyId,
+  RoofingOpportunity,
+  SearchResultData,
+} from "../src/oracle/types";
+
 const searchFixture = JSON.parse(
   readFileSync(
     new URL("../contracts/fixtures/search-response.json", import.meta.url),
     "utf8",
   ),
-) as {
-  result: {
-    data: {
-      opportunities: Array<{
-        property: {
-          propertyId: string;
-          evidence: Array<{ evidenceId: string }>;
-        };
-      }>;
-    };
-  };
-};
+) as { result: OracleSuccess<SearchResultData> };
 const agentProperty = searchFixture.result.data.opportunities[0]!.property;
 
 test.beforeEach(async ({ page }) => {
@@ -35,6 +31,15 @@ test("choose center, filter, inspect provenance, create and update a lead", asyn
   });
 
   await page.goto("/");
+  const sessionCookie = (await page.context().cookies()).find(
+    (cookie) => cookie.name === "roofline_session",
+  );
+  expect(sessionCookie).toMatchObject({
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+  });
+  expect(sessionCookie!.expires - Date.now() / 1000).toBeGreaterThan(6 * 24 * 60 * 60);
   await expect(page.getByText("OpenStreetMap contributors")).toBeVisible();
   const map = page.locator(".leaflet-map");
   await map.click({ position: { x: 310, y: 190 } });
@@ -54,6 +59,7 @@ test("choose center, filter, inspect provenance, create and update a lead", asyn
     filters: {
       roofAge: { years: 18, basis: "direct_or_proxy" },
       permit: { openOnly: true, minOpenDays: 45 },
+      matchMode: "all",
     },
   });
   await expect(
@@ -61,7 +67,14 @@ test("choose center, filter, inspect provenance, create and update a lead", asyn
       name: "100 TEST WAY, FIXTURE ZEPHYRHILLS, FL 33540",
     }),
   ).toBeVisible();
-  await expect(page.getByText("year built proxy · proxy")).toBeVisible();
+  await expect(
+    page.getByText("Year built proxy · proxy (not actual roof age)"),
+  ).toBeVisible();
+  await expect(page.getByText("2 current owners")).toBeVisible();
+  await expect(page.getByText("Public mailing address", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/source reported and not independently verified/i),
+  ).toBeVisible();
   await expect(page.getByText("No public evidence link available")).toBeVisible();
 
   await page.getByRole("button", { name: "Create lead" }).click();
@@ -77,6 +90,63 @@ test("choose center, filter, inspect provenance, create and update a lead", asyn
   await page.getByRole("button", { name: "Save lead" }).click();
   await expect(page.getByText("Lead updated.")).toBeVisible();
   await expect(leadRow).toContainText("contacted");
+});
+
+test("loads bounded cursor pages while keeping map and result IDs synchronized", async ({
+  page,
+}) => {
+  const template = searchFixture.result.data.opportunities[0]!;
+  const opportunities = Array.from({ length: 12 }, (_, index) => {
+    const opportunity = structuredClone(template) as RoofingOpportunity;
+    const suffix = (index + 1).toString(16).padStart(32, "0");
+    const propertyId = `prop_${suffix}` as PropertyId;
+    const property = opportunity.property as unknown as {
+      propertyId: PropertyId;
+      address: { value: string };
+      permits: Array<{ propertyId: PropertyId }>;
+    };
+    property.propertyId = propertyId;
+    property.address.value = `${index + 1} SYNTHETIC TEST WAY`;
+    property.permits.forEach((permit) => {
+      permit.propertyId = propertyId;
+    });
+    return opportunity;
+  });
+  const cursors: Array<string | undefined> = [];
+
+  await page.route("**/api/search", async (route) => {
+    const input = route.request().postDataJSON() as {
+      page: { cursor?: string };
+    };
+    cursors.push(input.page.cursor);
+    const response = structuredClone(searchFixture.result) as unknown as {
+      data: { opportunities: RoofingOpportunity[] };
+      meta: { nextCursor: string | null };
+    };
+    const secondPage = input.page.cursor === "cursor_page_2";
+    response.data.opportunities = secondPage
+      ? opportunities.slice(10)
+      : opportunities.slice(0, 10);
+    response.meta.nextCursor = secondPage ? null : "cursor_page_2";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(response),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Search opportunities" }).click();
+  await expect(page.locator(".result-card")).toHaveCount(10);
+  await expect(page.locator(".map-marker-shell")).toHaveCount(10);
+
+  await page.getByRole("button", { name: "Load next 10 results" }).click();
+  await expect(page.locator(".result-card")).toHaveCount(12);
+  await expect(page.locator(".map-marker-shell")).toHaveCount(12);
+  expect(cursors).toEqual([undefined, "cursor_page_2"]);
+
+  await page.locator(".result-card").last().click();
+  await expect(page.getByText(opportunities[11]!.property.propertyId)).toBeVisible();
 });
 
 test("geolocation denial keeps a clear Pasco fallback", async ({ page }) => {
@@ -105,9 +175,7 @@ test("partial data remains explicit", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Search opportunities" }).click();
   await expect(page.getByText("Partial data")).toBeVisible();
-  await expect(
-    page.getByText(/Permit, contractor, and BBB values are unavailable/),
-  ).toBeVisible();
+  await expect(page.getByText(/Contractor and BBB values are unavailable/)).toBeVisible();
   await expect(page.getByText("Not applicable")).toBeVisible();
 });
 

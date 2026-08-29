@@ -24,6 +24,12 @@ import {
 } from "@/oracle/mcp-transport";
 import { jsonResponse } from "@/server/request-context";
 import {
+  createRequestId,
+  recordServerError,
+  sanitizedErrorClass,
+  type ServerErrorEvent,
+} from "@/server/error-telemetry";
+import {
   assertSameOrigin,
   resolveAnonymousSession,
   SameOriginError,
@@ -45,6 +51,7 @@ interface QueryHandlerDependencies {
   readonly createOracle?: typeof createOracleClient;
   readonly acquireSession?: typeof acquireAgentSession;
   readonly runAgent?: typeof runGroundedAgent;
+  readonly recordError?: (event: ServerErrorEvent) => void;
 }
 
 function errorResult(
@@ -163,7 +170,10 @@ function classifiedError(error: unknown): {
     return { body: errorResult("grounding_rejected", error.message), status: 422 };
   }
   if (error instanceof AgentMcpError) {
-    return { body: errorResult("mcp_error", error.message), status: 503 };
+    return {
+      body: errorResult("mcp_error", "Oracle MCP could not complete the request."),
+      status: 503,
+    };
   }
   if (
     error instanceof ContractValidationError ||
@@ -312,8 +322,10 @@ export function createQueryPostHandler(
   const createOracle = dependencies.createOracle ?? createOracleClient;
   const acquireSession = dependencies.acquireSession ?? acquireAgentSession;
   const runAgent = dependencies.runAgent ?? runGroundedAgent;
+  const reportError = dependencies.recordError ?? recordServerError;
 
   return async function queryPost(request: Request): Promise<Response> {
+    const startedAt = performance.now();
     let setCookieHeader: string | null = null;
     let release: (() => void) | null = null;
     try {
@@ -367,8 +379,22 @@ export function createQueryPostHandler(
         );
       }
       const classified = classifiedError(error);
+      const requestId = createRequestId();
+      reportError({
+        requestId,
+        operation: "grounded_property_query",
+        errorClass: sanitizedErrorClass(error),
+        latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      });
+      const body =
+        classified.body.status === "error"
+          ? {
+              ...classified.body,
+              error: { ...classified.body.error, requestId },
+            }
+          : classified.body;
       return jsonResponse(
-        classified.body,
+        body,
         {
           status: classified.status,
           ...(classified.retryAfterSeconds === undefined

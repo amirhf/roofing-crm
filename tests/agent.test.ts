@@ -3,6 +3,8 @@ import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 
 import errorFixture from "../contracts/fixtures/error-response.json";
+import permitResponseFixture from "../contracts/fixtures/permit-response.json";
+import propertyResponseFixture from "../contracts/fixtures/property-response.json";
 import {
   AgentGroundingError,
   AgentMcpError,
@@ -168,6 +170,41 @@ describe("grounded natural-language agent", () => {
     expect(attribution).not.toContain(queryRequest.query);
     expect(attribution).not.toContain("Zephyrhills");
     expect(attribution).not.toContain("roofline_session");
+    expect(attribution).not.toContain("EXAMPLE RECORD HOLDER");
+    const modelTraffic = JSON.stringify(model.doGenerateCalls);
+    expect(modelTraffic).not.toContain("EXAMPLE RECORD HOLDER ONE");
+    expect(modelTraffic).not.toContain("900 EXAMPLE RECORD AVENUE");
+    expect(modelTraffic).not.toContain("100 TEST WAY");
+    const property = propertyResponseFixture.result.data;
+    const sensitiveValues = [
+      ...(property.folio.availability === "available" ? [property.folio.value] : []),
+      ...(property.address.availability === "available" ? [property.address.value] : []),
+      ...(property.coordinates.availability === "available"
+        ? [
+            String(property.coordinates.value.latitude),
+            String(property.coordinates.value.longitude),
+          ]
+        : []),
+      ...(property.ownership.currentOwners.availability === "available"
+        ? property.ownership.currentOwners.value.map((owner) => owner.displayName)
+        : []),
+      ...(property.ownership.publicMailingAddress.availability === "available"
+        ? Object.values(property.ownership.publicMailingAddress.value).flatMap((fact) =>
+            fact.availability === "available"
+              ? Array.isArray(fact.value)
+                ? fact.value
+                : [String(fact.value)]
+              : [],
+          )
+        : []),
+    ];
+    expect(
+      sensitiveValues
+        .filter((value) => value.length >= 6)
+        .find((value) => modelTraffic.includes(value)),
+    ).toBeUndefined();
+    expect(modelTraffic).toContain("value_redacted");
+    expect(modelTraffic).toContain('"count":2');
   });
 
   it("delegates geospatial, roof-age, permit-age, and eligibility work to Oracle", async () => {
@@ -244,6 +281,43 @@ describe("grounded natural-language agent", () => {
     expect(result.properties[0]?.permits).toEqual([]);
   });
 
+  it("preserves unavailable contact fields as MCP-backed missing data", async () => {
+    const missingFields = [
+      {
+        propertyId,
+        permitId: null,
+        field: "ownership.phone",
+        reason: "source_not_collected",
+      },
+      {
+        propertyId,
+        permitId: null,
+        field: "ownership.email",
+        reason: "source_not_collected",
+      },
+    ];
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      finish(groundedOutput({ missingFields })),
+    );
+    const result = await runGroundedAgent({
+      model,
+      oracleClient: fixtureOracle(),
+      nodeEnvironment: "test",
+      sessionIdHash,
+      request: queryRequest,
+    });
+    expect(result.missingFields).toEqual(missingFields);
+    expect(result.properties[0]?.ownership.phone).toMatchObject({
+      availability: "unavailable",
+      value: null,
+    });
+    expect(result.properties[0]?.ownership.email).toMatchObject({
+      availability: "unavailable",
+      value: null,
+    });
+  });
+
   it("rejects malformed tool arguments before Oracle is called", async () => {
     const oracle = fixtureOracle();
     const search = vi.spyOn(oracle, "searchRoofingOpportunities");
@@ -308,6 +382,224 @@ describe("grounded natural-language agent", () => {
         request: queryRequest,
       }),
     ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("rejects a permit-only property ID without a returned Property object", async () => {
+    const permit = permitResponseFixture.result.data;
+    const model = modelWith(
+      callTool("prism_v1_get_permit", { permitId: permit.permitId }),
+      finish(
+        groundedOutput({
+          filters: null,
+          propertyIds: [permit.propertyId],
+          evidenceRefs: [permit.evidence[0]!.evidenceId],
+        }),
+      ),
+    );
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: fixtureOracle(),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("rejects a dangling fact evidence reference without an evidence object", async () => {
+    const response = structuredClone(propertyResponseFixture.result);
+    response.data.roofAgeSignal.evidenceRefs = ["ev_dangling"];
+    const base = fixtureOracle();
+    const oracle: OracleClient = {
+      getServiceInfo: () => base.getServiceInfo(),
+      getPipelineRunSummary: () => base.getPipelineRunSummary(),
+      searchRoofingOpportunities: (input) => base.searchRoofingOpportunities(input),
+      getProperty: async () => response as never,
+      getPermit: (input) => base.getPermit(input),
+      getQuerySchema: () => base.getQuerySchema(),
+    };
+    const model = modelWith(
+      callTool("prism_v1_get_property", { propertyId }),
+      finish(
+        groundedOutput({
+          filters: null,
+          evidenceRefs: ["ev_dangling"],
+        }),
+      ),
+    );
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("rejects a directly fetched property that was absent from the executed search", async () => {
+    const unrelatedId = "prop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const response = structuredClone(propertyResponseFixture.result);
+    response.data.propertyId = unrelatedId;
+    const base = fixtureOracle();
+    const oracle: OracleClient = {
+      getServiceInfo: () => base.getServiceInfo(),
+      getPipelineRunSummary: () => base.getPipelineRunSummary(),
+      searchRoofingOpportunities: (input) => base.searchRoofingOpportunities(input),
+      getProperty: async () => response as never,
+      getPermit: (input) => base.getPermit(input),
+      getQuerySchema: () => base.getQuerySchema(),
+    };
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_get_property", { propertyId: unrelatedId }, "property-2"),
+      finish(groundedOutput({ propertyIds: [unrelatedId] })),
+    );
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("rejects evidence returned for a different directly fetched property", async () => {
+    const unrelatedId = "prop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const response = JSON.parse(
+      JSON.stringify(propertyResponseFixture.result).replaceAll(
+        "ev_fixture_appraiser_001",
+        "ev_property_b",
+      ),
+    ) as typeof propertyResponseFixture.result;
+    response.data.propertyId = unrelatedId;
+    const base = fixtureOracle();
+    const oracle: OracleClient = {
+      getServiceInfo: () => base.getServiceInfo(),
+      getPipelineRunSummary: () => base.getPipelineRunSummary(),
+      searchRoofingOpportunities: (input) => base.searchRoofingOpportunities(input),
+      getProperty: async () => response as never,
+      getPermit: (input) => base.getPermit(input),
+      getQuerySchema: () => base.getQuerySchema(),
+    };
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_get_property", { propertyId: unrelatedId }, "property-b"),
+      finish(groundedOutput({ evidenceRefs: ["ev_property_b"] })),
+    );
+
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("rejects permit evidence that belongs to a different property", async () => {
+    const permit = structuredClone(permitResponseFixture.result);
+    permit.data.propertyId = "prop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const base = fixtureOracle();
+    const oracle: OracleClient = {
+      getServiceInfo: () => base.getServiceInfo(),
+      getPipelineRunSummary: () => base.getPipelineRunSummary(),
+      searchRoofingOpportunities: (input) => base.searchRoofingOpportunities(input),
+      getProperty: (input) => base.getProperty(input),
+      getPermit: async () => permit as never,
+      getQuerySchema: () => base.getQuerySchema(),
+    };
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_get_permit", { permitId: permit.data.permitId }, "permit-b"),
+      finish(groundedOutput({ evidenceRefs: [permit.data.evidence[0]!.evidenceId] })),
+    );
+
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("rejects missing-field claims for a property outside the output", async () => {
+    const unrelatedId = "prop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const response = structuredClone(propertyResponseFixture.result);
+    response.data.propertyId = unrelatedId;
+    const base = fixtureOracle();
+    const oracle: OracleClient = {
+      getServiceInfo: () => base.getServiceInfo(),
+      getPipelineRunSummary: () => base.getPipelineRunSummary(),
+      searchRoofingOpportunities: (input) => base.searchRoofingOpportunities(input),
+      getProperty: async () => response as never,
+      getPermit: (input) => base.getPermit(input),
+      getQuerySchema: () => base.getQuerySchema(),
+    };
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_get_property", { propertyId: unrelatedId }, "property-b"),
+      finish(
+        groundedOutput({
+          missingFields: [
+            {
+              propertyId: unrelatedId,
+              permitId: null,
+              field: "ownership.phone",
+              reason: "source_not_collected",
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("redacts contractor values from permit tool traffic", async () => {
+    const permit = permitResponseFixture.result.data;
+    const model = modelWith(
+      callTool("prism_v1_get_permit", { permitId: permit.permitId }),
+      finish({
+        status: "cannot_ground",
+        filters: null,
+        propertyIds: [],
+        evidenceRefs: [],
+        missingFields: [],
+        failure: { code: "unsupported_request" },
+      }),
+    );
+    await runGroundedAgent({
+      model,
+      oracleClient: fixtureOracle(),
+      nodeEnvironment: "test",
+      sessionIdHash,
+      request: queryRequest,
+    });
+    const modelTraffic = JSON.stringify(model.doGenerateCalls);
+    if (permit.contractor.availability === "available") {
+      expect(modelTraffic).not.toContain(permit.contractor.value.name);
+      if (permit.contractor.value.licenseNumber) {
+        expect(modelTraffic).not.toContain(permit.contractor.value.licenseNumber);
+      }
+    }
   });
 
   it("refuses prompt injection requesting SQL and direct storage access", async () => {
@@ -410,6 +702,27 @@ describe("grounded natural-language agent", () => {
         ...groundedOutput(),
         answer:
           "Owner Jane Doe has a 999-year-old roof. SELECT * FROM owners at 123 Secret Lane.",
+      } as unknown as AgentModelOutput),
+    );
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: fixtureOracle(),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("rejects model-authored owner and contact claims", async () => {
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      finish({
+        ...groundedOutput(),
+        ownerNames: ["Invented Owner"],
+        phone: "known negative",
+        email: "known negative",
       } as unknown as AgentModelOutput),
     );
     await expect(

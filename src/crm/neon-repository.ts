@@ -7,8 +7,9 @@ type LeadRow = {
   lead_id: string;
   session_id_hash: string;
   oracle_reference_key: string;
-  oracle_contract_version: string;
-  oracle_schema_hash: string;
+  lead_contract_version: string;
+  oracle_source_contract_version: string;
+  oracle_contract_hash: string;
   property_id: string;
   permit_id: string | null;
   source_publication_cid: string | null;
@@ -21,9 +22,10 @@ type LeadRow = {
 };
 
 const RETURNING_COLUMNS = `
-  lead_id, session_id_hash, oracle_reference_key, oracle_contract_version,
-  oracle_schema_hash, property_id, permit_id, source_publication_cid,
-  source_captured_at, status, notes, created_at, updated_at, session_expires_at
+  lead_id, session_id_hash, oracle_reference_key, lead_contract_version,
+  oracle_source_contract_version, oracle_contract_hash, property_id, permit_id,
+  source_publication_cid, source_captured_at, status, notes, created_at,
+  updated_at, session_expires_at
 `;
 
 function iso(value: string | Date): string {
@@ -32,12 +34,12 @@ function iso(value: string | Date): string {
 
 function fromRow(row: LeadRow): CrmLead {
   const lead = {
-    contractVersion: "1.0.0",
+    contractVersion: row.lead_contract_version,
     leadId: row.lead_id,
     sessionIdHash: row.session_id_hash,
     oracleReferenceKey: row.oracle_reference_key,
-    oracleContractVersion: row.oracle_contract_version,
-    oracleSchemaHash: row.oracle_schema_hash,
+    oracleContractVersion: row.oracle_source_contract_version,
+    oracleContractHash: row.oracle_contract_hash,
     propertyId: row.property_id,
     permitId: row.permit_id,
     sourcePublicationCid: row.source_publication_cid,
@@ -73,19 +75,23 @@ export class NeonLeadRepository implements LeadRepository {
     await this.cleanupExpired(new Date());
     const rows = await this.sql.query(
       `INSERT INTO crm_leads (
-         lead_id, session_id_hash, oracle_reference_key, oracle_contract_version,
-         oracle_schema_hash, property_id, permit_id, source_publication_cid,
-         source_captured_at, status, notes, created_at, updated_at, session_expires_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-       ON CONFLICT (session_id_hash, oracle_reference_key)
+         lead_id, session_id_hash, oracle_reference_key, lead_contract_version,
+         oracle_contract_version, oracle_source_contract_version,
+         oracle_contract_hash, oracle_schema_hash,
+         property_id, permit_id, source_publication_cid, source_captured_at,
+         status, notes, created_at, updated_at, session_expires_at
+       ) VALUES ($1, $2, $3, $4, '1.0.0', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       ON CONFLICT (session_id_hash, property_id, (COALESCE(permit_id, '')))
        DO UPDATE SET oracle_reference_key = EXCLUDED.oracle_reference_key
        RETURNING ${RETURNING_COLUMNS}`,
       [
         lead.leadId,
         lead.sessionIdHash,
         lead.oracleReferenceKey,
+        lead.contractVersion,
         lead.oracleContractVersion,
-        lead.oracleSchemaHash,
+        lead.oracleContractHash,
+        lead.oracleContractHash,
         lead.propertyId,
         lead.permitId,
         lead.sourcePublicationCid,

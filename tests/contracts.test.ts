@@ -116,18 +116,18 @@ describe("frozen MCP contract", () => {
     expect(() => assertValidMcpFixture(fixture)).toThrow(ContractValidationError);
   });
 
-  it("rejects empty mailing lines and situs substitution", () => {
+  it("rejects empty mailing lines", () => {
     const empty = mutablePropertyFixture();
     const emptyMailing = record(empty.ownership.publicMailingAddress);
     record(record(emptyMailing.value).addressLines).value = [];
     expect(() => assertValidMcpFixture(empty.fixture)).toThrow(ContractValidationError);
+  });
 
-    const substituted = mutablePropertyFixture();
-    record(substituted.data.address).value =
+  it("accepts a public mailing address that happens to equal the situs address", () => {
+    const sameAddress = mutablePropertyFixture();
+    record(sameAddress.data.address).value =
       "900 EXAMPLE RECORD AVENUE, SAMPLEVILLE, FL 00000, US";
-    expect(() => assertValidMcpFixture(substituted.fixture)).toThrow(
-      ContractValidationError,
-    );
+    expect(() => assertValidMcpFixture(sameAddress.fixture)).not.toThrow();
   });
 
   it("rejects invented unavailable contacts and malformed available email", () => {
@@ -250,5 +250,13 @@ describe("frozen MCP contract", () => {
     expect(await sha256(contractLock.crmLeadSchema.path)).toBe(
       contractLock.crmLeadSchema.sha256,
     );
+    expect(contractLock.crmLeadSchema.contractVersion).toBe("1.1.0");
+    expect(contractLock.supersededCrmLeadContracts).toContainEqual({
+      contractVersion: "1.0.0",
+      sha256: "737d61740cc2444dc919e8c96e1df929ba68bebca42ba40bd9532cc43e527407",
+      crmSourceCommit: "3817a2fe6536ff03c516415d45bd3e6772138fdb",
+      evidence:
+        "Exact superseded bytes remain available in CRM Git history at the source commit.",
+    });
   });
 });

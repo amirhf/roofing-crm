@@ -90,11 +90,7 @@ export default function OpportunityMap({
               property.coordinates.value.longitude,
             ]}
             icon={pinIcon(selected)}
-            title={
-              property.address.availability === "available"
-                ? property.address.value
-                : property.propertyId
-            }
+            title={property.propertyId}
             keyboard
             eventHandlers={{ click: () => onSelect(property.propertyId) }}
             zIndexOffset={selected ? 1000 : 0}

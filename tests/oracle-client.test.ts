@@ -12,6 +12,7 @@ import {
   createBoundedOracleFetch,
   OracleMcpTransportError,
   OracleMcpResponseSizeError,
+  settleBoundedOracleClose,
   StreamableHttpOracleMcpTransport,
 } from "../src/oracle/mcp-transport";
 import type { OracleMcpTransport, SearchArguments } from "../src/oracle/types";
@@ -56,6 +57,15 @@ describe("typed Oracle client boundary", () => {
     await expect(
       client.searchRoofingOpportunities(searchArguments),
     ).rejects.toBeInstanceOf(OracleSchemaHashMismatchError);
+  });
+
+  it("rejects a response that reports the wrong MCP contract version", async () => {
+    const invalid = structuredClone(searchResponseFixture.result);
+    invalid.meta.contractVersion = "1.1.0" as never;
+    const client = new ContractValidatingOracleClient(new StubTransport(invalid), "test");
+    await expect(
+      client.searchRoofingOpportunities(searchArguments),
+    ).rejects.toBeInstanceOf(ContractValidationError);
   });
 
   it("rejects fixture markers from an otherwise valid production response", async () => {
@@ -129,5 +139,42 @@ describe("typed Oracle client boundary", () => {
 
     await expect(pending).rejects.toBeInstanceOf(OracleMcpTransportError);
     await expect(observedAbort).resolves.toMatchObject({ aborted: true });
+  });
+
+  it("applies the timeout to MCP initialization, not only the tool call", async () => {
+    let observedSignal: AbortSignal | undefined;
+    const fetch = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          observedSignal = init?.signal ?? undefined;
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Initialization timed out.", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    const transport = new StreamableHttpOracleMcpTransport(
+      new URL("https://oracle.example.test/mcp"),
+      fetch,
+    );
+    const startedAt = Date.now();
+
+    await expect(transport.listToolNames({ timeoutMs: 25 })).rejects.toBeInstanceOf(
+      OracleMcpTransportError,
+    );
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
+  it("settles cleanup when an MCP client close never resolves", async () => {
+    const startedAt = Date.now();
+    await settleBoundedOracleClose(
+      async () => await new Promise<void>(() => undefined),
+      undefined,
+      20,
+    );
+    expect(Date.now() - startedAt).toBeLessThan(500);
   });
 });

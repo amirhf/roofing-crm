@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import searchRequest from "../contracts/fixtures/search-request.json";
 import searchResponse from "../contracts/fixtures/search-response.json";
 import { createQueryPostHandler } from "../src/agent/http";
+import { AgentMcpError } from "../src/agent/errors";
 import { GET as getLead, PATCH as patchLead } from "../src/app/api/leads/[leadId]/route";
 import { GET as listLeads, POST as postLead } from "../src/app/api/leads/route";
 import { POST as search } from "../src/app/api/search/route";
@@ -32,9 +33,6 @@ const origin = "http://localhost:3000";
 const createInput = {
   propertyId: "prop_e72ba795455c19d71ce4cb11f6177a5e",
   permitId: null,
-  oracleSchemaHash: "714ee037ffca1362870a5135328a783bfe4a0161e7136e09d4d1590894211de7",
-  sourcePublicationCid: null,
-  sourceCapturedAt: "2026-08-28T00:00:00.000Z",
 };
 
 function request(path: string, method: string, body?: unknown, cookie?: string): Request {
@@ -345,6 +343,49 @@ describe("server APIs", () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
+  it("redacts an upstream MCP sentinel and emits only sanitized diagnostics", async () => {
+    const recordError = vi.fn();
+    const config = configuredTestRuntime();
+    const handler = createQueryPostHandler({
+      loadConfig: () => config,
+      createModel: () => ({
+        provider: "mock",
+        modelId: "test/mock",
+        model: new MockLanguageModelV4(),
+      }),
+      createOracle: () => new DevelopmentFixtureOracleClient("test"),
+      runAgent: async () => {
+        throw new AgentMcpError(
+          "dependency_unavailable",
+          "sentinel-secret-upstream-detail",
+        );
+      },
+      recordError,
+    });
+
+    const response = await handler(request("/api/query", "POST", queryInput));
+    const bodyText = await response.text();
+    expect(response.status).toBe(503);
+    expect(bodyText).not.toContain("sentinel-secret-upstream-detail");
+    const body = JSON.parse(bodyText) as {
+      error: { code: string; message: string; requestId: string };
+    };
+    expect(body.error).toMatchObject({
+      code: "mcp_error",
+      message: "Oracle MCP could not complete the request.",
+      requestId: expect.stringMatching(/^[a-f0-9-]{36}$/),
+    });
+    expect(recordError).toHaveBeenCalledWith({
+      requestId: body.error.requestId,
+      operation: "grounded_property_query",
+      errorClass: "AgentMcpError",
+      latencyMs: expect.any(Number),
+    });
+    expect(JSON.stringify(recordError.mock.calls)).not.toContain(
+      "sentinel-secret-upstream-detail",
+    );
+  });
+
   it("maps a pre-parse oversized MCP response to the invalid-response boundary", async () => {
     const response = await handlerFailingWith(
       new OracleMcpResponseSizeError("Oracle MCP HTTP response was too large."),
@@ -402,8 +443,33 @@ describe("server APIs", () => {
   it("creates, lists, reads, and updates a lead through the signed session API", async () => {
     const createdResponse = await postLead(request("/api/leads", "POST", createInput));
     expect(createdResponse.status).toBe(201);
-    const created = (await createdResponse.json()) as { lead: { leadId: string } };
+    const created = (await createdResponse.json()) as {
+      lead: {
+        leadId: string;
+        contractVersion: string;
+        oracleContractVersion: string;
+        oracleContractHash: string;
+      };
+    };
+    expect(created.lead).toMatchObject({
+      contractVersion: "1.1.0",
+      oracleContractVersion: "1.2.0",
+      oracleContractHash:
+        "9fc112ef8a4e2120593c3dc20c90073b0eb96596817c96112f63fd258bb7c131",
+    });
+    expect(created.lead).not.toHaveProperty("ownership");
+    expect(created.lead).not.toHaveProperty("owner");
+    expect(created.lead).not.toHaveProperty("phone");
+    expect(created.lead).not.toHaveProperty("email");
     const cookie = createdResponse.headers.get("set-cookie")!.split(";", 1)[0]!;
+
+    const duplicateResponse = await postLead(
+      request("/api/leads", "POST", createInput, cookie),
+    );
+    expect(duplicateResponse.status).toBe(201);
+    await expect(duplicateResponse.json()).resolves.toMatchObject({
+      lead: { leadId: created.lead.leadId },
+    });
 
     const listedResponse = await listLeads(
       request("/api/leads", "GET", undefined, cookie),
@@ -443,5 +509,20 @@ describe("server APIs", () => {
       { params: Promise.resolve({ leadId: created.lead.leadId }) },
     );
     expect(response.status).toBe(404);
+  });
+
+  it("rejects client attempts to forge Oracle provenance", async () => {
+    const response = await postLead(
+      request("/api/leads", "POST", {
+        ...createInput,
+        oracleContractVersion: "1.0.0",
+        oracleContractHash:
+          "714ee037ffca1362870a5135328a783bfe4a0161e7136e09d4d1590894211de7",
+      }),
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "invalid_request" },
+    });
   });
 });

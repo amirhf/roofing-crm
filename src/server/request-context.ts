@@ -10,6 +10,7 @@ export function createLeadRequestContext(request: Request) {
     config.sessionSecret,
   );
   return {
+    config,
     repository: getLeadRepository(config),
     session,
   };

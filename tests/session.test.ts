@@ -8,6 +8,7 @@ import {
 } from "../src/server/session";
 import { acquireAgentSession } from "../src/agent/session-gate";
 import { AgentBusyError } from "../src/agent/errors";
+import { establishPageSession } from "../src/proxy";
 
 const secret = "0123456789abcdef0123456789abcdef";
 const now = new Date("2026-08-28T10:00:00.000Z");
@@ -21,6 +22,14 @@ describe("anonymous session boundary", () => {
     expect(session.setCookieHeader).toContain(`Max-Age=${SESSION_DURATION_SECONDS}`);
     expect(session.sessionIdHash).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(session.expiresAt).toBe("2026-09-04T10:00:00.000Z");
+  });
+
+  it("establishes the anonymous session on the initial page response", () => {
+    const response = establishPageSession(null, secret, now);
+    expect(response.headers.get("set-cookie")).toContain("roofline_session=");
+    expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(response.headers.get("set-cookie")).toContain("Secure");
+    expect(response.headers.get("set-cookie")).toContain("SameSite=Lax");
   });
 
   it("reuses a valid cookie and rejects a tampered signature", () => {

@@ -17,6 +17,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:real-mcp": "playwright test --config playwright.real-mcp.config.ts",
+    "test:integration:mcp": "vitest run --config vitest.real-mcp.config.ts",
+    "test:integration:postgres-migration": "node scripts/verify-lead-migration.mjs",
     "test:watch": "vitest",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
   },

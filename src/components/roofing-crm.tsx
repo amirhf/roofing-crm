@@ -1,9 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { CrmLead } from "@/crm/lead";
 import type { OracleResult, SearchArguments, SearchResultData } from "@/oracle/types";
 
 import { LeadWorkspace } from "./lead-workspace";
@@ -96,7 +95,7 @@ function Navigation({
       <div className="rail-note">
         <span className="status-dot" />
         <p>
-          Fixture workspace<small>Development and test only</small>
+          Oracle workspace<small>Validated MCP boundary</small>
         </p>
       </div>
     </>
@@ -117,14 +116,28 @@ export function RoofingCrm() {
   );
   const [searchState, setSearchState] = useState<SearchState>("idle");
   const [searchMessage, setSearchMessage] = useState(
-    "Ready to search the development fixture boundary.",
+    "Ready to search the validated Oracle boundary.",
   );
   const [result, setResult] = useState<OracleResult<SearchResultData> | null>(null);
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
+  const [lastSearchInput, setLastSearchInput] = useState<SearchArguments | null>(null);
+  const [pagePending, setPagePending] = useState(false);
+  const [paginationError, setPaginationError] = useState<string | null>(null);
   const [leadPending, setLeadPending] = useState(false);
   const [leadMessage, setLeadMessage] = useState<string | null>(null);
   const [leadRefreshKey, setLeadRefreshKey] = useState(0);
   const detailsRef = useRef<HTMLElement>(null);
+  const searchGenerationRef = useRef(0);
+  const searchAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      searchGenerationRef.current += 1;
+      searchAbortRef.current?.abort();
+      searchAbortRef.current = null;
+    },
+    [],
+  );
 
   const opportunities = useMemo(
     () => (result?.ok ? result.data.opportunities : []),
@@ -134,7 +147,21 @@ export function RoofingCrm() {
     opportunities.find(({ property }) => property.propertyId === selectedPropertyId) ??
     null;
 
+  function invalidateSearchResults() {
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
+    searchGenerationRef.current += 1;
+    setLastSearchInput(null);
+    setPaginationError(null);
+    setPagePending(false);
+    setResult(null);
+    setSelectedPropertyId(null);
+    setSearchState("idle");
+    setSearchMessage("Search inputs changed. Run a new Oracle search.");
+  }
+
   function updateCenter(next: MapPoint, message: string) {
+    invalidateSearchResults();
     setCenter(next);
     setLatitude(next.latitude.toFixed(6));
     setLongitude(next.longitude.toFixed(6));
@@ -183,71 +210,147 @@ export function RoofingCrm() {
     updateCenter(next, "Coordinate center selected.");
   }
 
-  async function runSearch(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSearchState("loading");
-    setSearchMessage("Oracle search is running…");
-    setLeadMessage(null);
-    const input: SearchArguments = {
+  function buildSearchInput(): SearchArguments {
+    return {
       county: "pasco",
       center: { kind: "coordinates", ...center },
       radius: { value: radius, unit: "mi" },
       filters: {
         roofAge: { operator: "gte", years: roofAge, basis: "direct_or_proxy" },
-        permit: { roofingOnly: true, openOnly: openPermits, minOpenDays },
-        matchMode: "any",
+        ...(openPermits
+          ? {
+              permit: { roofingOnly: true, openOnly: true, minOpenDays },
+            }
+          : {}),
+        matchMode: "all",
       },
       sort: openPermits ? "permit_open_days_desc" : "distance_asc",
-      page: { limit: 25 },
+      page: { limit: 10 },
     };
+  }
+
+  async function performSearch(
+    input: SearchArguments,
+    options: Readonly<{
+      append: boolean;
+      generation: number;
+      controller: AbortController;
+    }>,
+  ) {
+    if (options.append) {
+      setPagePending(true);
+      setPaginationError(null);
+    } else {
+      setSearchState("loading");
+      setSearchMessage("Oracle search is running…");
+      setLeadMessage(null);
+      setResult(null);
+      setSelectedPropertyId(null);
+      setPaginationError(null);
+    }
 
     try {
       const response = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
+        signal: options.controller.signal,
       });
       const payload = (await response.json()) as
         OracleResult<SearchResultData> | { error: { code: string; message: string } };
+      if (options.generation !== searchGenerationRef.current) return;
       if (!response.ok) {
         const error =
           "error" in payload
             ? payload.error
             : { code: "oracle_unavailable", message: "Search failed." };
-        setSearchState(
-          error.code === "invalid_contract" || error.code === "schema_hash_mismatch"
-            ? "invalid"
-            : "error",
-        );
-        setSearchMessage(error.message);
-        setResult(null);
-        setSelectedPropertyId(null);
+        if (options.append) {
+          setPaginationError(error.message);
+        } else {
+          setSearchState(
+            error.code === "invalid_contract" || error.code === "schema_hash_mismatch"
+              ? "invalid"
+              : "error",
+          );
+          setSearchMessage(error.message);
+        }
         return;
       }
       const oracleResult = payload as OracleResult<SearchResultData>;
       if (!oracleResult.ok) {
-        setSearchState("error");
-        setSearchMessage(oracleResult.error.message);
+        if (options.append) {
+          setPaginationError("Oracle could not load the next result page.");
+        } else {
+          setSearchState("error");
+          setSearchMessage(oracleResult.error.message);
+        }
         return;
       }
-      setResult(oracleResult);
-      const first = oracleResult.data.opportunities[0];
-      setSelectedPropertyId(first?.property.propertyId ?? null);
-      if (!first) {
+      const existing = options.append && result?.ok ? result.data.opportunities : [];
+      const seen = new Set(existing.map(({ property }) => property.propertyId));
+      const additions = oracleResult.data.opportunities.filter(
+        ({ property }) => !seen.has(property.propertyId),
+      );
+      const combined = [...existing, ...additions];
+      setResult({
+        ...oracleResult,
+        data: { ...oracleResult.data, opportunities: combined },
+      });
+      if (!options.append) {
+        setSelectedPropertyId(combined[0]?.property.propertyId ?? null);
+      }
+      if (combined.length === 0) {
         setSearchState("empty");
         setSearchMessage("No opportunities matched these Oracle-resolved filters.");
       } else {
         setSearchState("success");
         setSearchMessage(
-          `${oracleResult.data.opportunities.length} opportunity returned.`,
+          `${combined.length} ${combined.length === 1 ? "opportunity" : "opportunities"} returned.`,
         );
       }
     } catch {
-      setSearchState("error");
-      setSearchMessage("The Oracle MCP boundary could not be reached. Try again.");
-      setResult(null);
-      setSelectedPropertyId(null);
+      if (options.generation !== searchGenerationRef.current) return;
+      if (options.controller.signal.aborted) return;
+      if (options.append) {
+        setPaginationError("The next Oracle result page could not be loaded.");
+      } else {
+        setSearchState("error");
+        setSearchMessage("The Oracle MCP boundary could not be reached. Try again.");
+      }
+    } finally {
+      if (searchAbortRef.current === options.controller) {
+        searchAbortRef.current = null;
+      }
+      if (options.generation === searchGenerationRef.current) {
+        setPagePending(false);
+      }
     }
+  }
+
+  async function runSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const input = buildSearchInput();
+    const generation = searchGenerationRef.current + 1;
+    searchGenerationRef.current = generation;
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+    setLastSearchInput(input);
+    await performSearch(input, { append: false, generation, controller });
+  }
+
+  async function loadNextPage() {
+    if (!lastSearchInput || !result?.ok || !result.meta.nextCursor || pagePending) return;
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+    await performSearch(
+      {
+        ...lastSearchInput,
+        page: { ...lastSearchInput.page, cursor: result.meta.nextCursor },
+      },
+      { append: true, generation: searchGenerationRef.current, controller },
+    );
   }
 
   function selectOpportunity(propertyId: string) {
@@ -263,16 +366,6 @@ export function RoofingCrm() {
     const input = {
       propertyId: property.propertyId,
       permitId: property.permits[0]?.permitId ?? null,
-      oracleSchemaHash: result.meta.schemaHash,
-      sourcePublicationCid:
-        result.meta.artifactCids[0] ?? property.evidence[0]?.publishedCid ?? null,
-      sourceCapturedAt: result.meta.asOf,
-    } satisfies {
-      propertyId: CrmLead["propertyId"];
-      permitId: CrmLead["permitId"];
-      oracleSchemaHash: string;
-      sourcePublicationCid: string | null;
-      sourceCapturedAt: string;
     };
     try {
       const response = await fetch("/api/leads", {
@@ -346,7 +439,10 @@ export function RoofingCrm() {
                       min={-90}
                       max={90}
                       value={latitude}
-                      onChange={(event) => setLatitude(event.target.value)}
+                      onChange={(event) => {
+                        invalidateSearchResults();
+                        setLatitude(event.target.value);
+                      }}
                     />
                   </label>
                   <label>
@@ -357,7 +453,10 @@ export function RoofingCrm() {
                       min={-180}
                       max={180}
                       value={longitude}
-                      onChange={(event) => setLongitude(event.target.value)}
+                      onChange={(event) => {
+                        invalidateSearchResults();
+                        setLongitude(event.target.value);
+                      }}
                     />
                   </label>
                   <button
@@ -383,7 +482,10 @@ export function RoofingCrm() {
                         max={50}
                         step={0.1}
                         value={radius}
-                        onChange={(event) => setRadius(Number(event.target.value))}
+                        onChange={(event) => {
+                          invalidateSearchResults();
+                          setRadius(Number(event.target.value));
+                        }}
                       />{" "}
                       miles
                     </span>
@@ -397,7 +499,10 @@ export function RoofingCrm() {
                         max={100}
                         step={1}
                         value={roofAge}
-                        onChange={(event) => setRoofAge(Number(event.target.value))}
+                        onChange={(event) => {
+                          invalidateSearchResults();
+                          setRoofAge(Number(event.target.value));
+                        }}
                       />{" "}
                       years
                     </span>
@@ -406,7 +511,10 @@ export function RoofingCrm() {
                     <input
                       type="checkbox"
                       checked={openPermits}
-                      onChange={(event) => setOpenPermits(event.target.checked)}
+                      onChange={(event) => {
+                        invalidateSearchResults();
+                        setOpenPermits(event.target.checked);
+                      }}
                     />
                     <span>Require an open roofing permit</span>
                   </label>
@@ -419,7 +527,11 @@ export function RoofingCrm() {
                         max={36500}
                         step={1}
                         value={minOpenDays}
-                        onChange={(event) => setMinOpenDays(Number(event.target.value))}
+                        disabled={!openPermits}
+                        onChange={(event) => {
+                          invalidateSearchResults();
+                          setMinOpenDays(Number(event.target.value));
+                        }}
                       />{" "}
                       days
                     </span>
@@ -428,7 +540,7 @@ export function RoofingCrm() {
                 <button
                   className="primary-button search-button"
                   type="submit"
-                  disabled={searchState === "loading"}
+                  disabled={searchState === "loading" || pagePending}
                 >
                   {searchState === "loading"
                     ? "Searching Oracle…"
@@ -477,11 +589,17 @@ export function RoofingCrm() {
                           : "result-card"
                       }
                       key={opportunity.property.propertyId}
+                      data-property-id={opportunity.property.propertyId}
                       onClick={() => selectOpportunity(opportunity.property.propertyId)}
                     >
                       <span className="result-signal">
                         {opportunity.property.roofAgeSignal.availability === "available"
-                          ? `${opportunity.property.roofAgeSignal.value.ageYears} yr roof signal`
+                          ? `${opportunity.property.roofAgeSignal.value.ageYears} yr ${
+                              opportunity.property.roofAgeSignal.value.basis ===
+                              "year_built_proxy"
+                                ? "year-built proxy"
+                                : "roof signal"
+                            }`
                           : "Roof signal unavailable"}
                       </span>
                       <strong>
@@ -494,6 +612,21 @@ export function RoofingCrm() {
                       </small>
                     </button>
                   ))}
+                  {result?.ok && result.meta.nextCursor ? (
+                    <button
+                      type="button"
+                      className="secondary-button load-more-button"
+                      onClick={() => void loadNextPage()}
+                      disabled={pagePending}
+                    >
+                      {pagePending ? "Loading next page…" : "Load next 10 results"}
+                    </button>
+                  ) : null}
+                  {paginationError ? (
+                    <p className="pagination-error" role="alert">
+                      {paginationError}
+                    </p>
+                  ) : null}
                   {searchState === "empty" ? (
                     <div className="result-empty">
                       <strong>No matches</strong>

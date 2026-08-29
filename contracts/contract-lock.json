@@ -28,9 +28,18 @@
     "sha256": "9fc112ef8a4e2120593c3dc20c90073b0eb96596817c96112f63fd258bb7c131",
     "mustBeByteIdenticalAcrossAssignments": true
   },
+  "supersededCrmLeadContracts": [
+    {
+      "contractVersion": "1.0.0",
+      "sha256": "737d61740cc2444dc919e8c96e1df929ba68bebca42ba40bd9532cc43e527407",
+      "crmSourceCommit": "3817a2fe6536ff03c516415d45bd3e6772138fdb",
+      "evidence": "Exact superseded bytes remain available in CRM Git history at the source commit."
+    }
+  ],
   "crmLeadSchema": {
+    "contractVersion": "1.1.0",
     "path": "contracts/crm-lead-v1.schema.json",
-    "sha256": "737d61740cc2444dc919e8c96e1df929ba68bebca42ba40bd9532cc43e527407"
+    "sha256": "230b8225f9a133b0ccb9c2afbfc5496975541125a9e5e74f789ae191c0161e17"
   },
   "sharedFixtures": [
     {

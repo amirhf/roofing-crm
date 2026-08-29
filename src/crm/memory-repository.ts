@@ -27,7 +27,8 @@ export class DevelopmentMemoryLeadRepository implements LeadRepository {
     const duplicate = [...this.leads.values()].find(
       (candidate) =>
         candidate.sessionIdHash === lead.sessionIdHash &&
-        candidate.oracleReferenceKey === lead.oracleReferenceKey,
+        candidate.propertyId === lead.propertyId &&
+        candidate.permitId === lead.permitId,
     );
     if (duplicate) return duplicate;
     this.leads.set(lead.leadId, structuredClone(lead));

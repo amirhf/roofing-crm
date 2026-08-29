@@ -106,10 +106,6 @@ function semanticError(instancePath: string, keyword: string): ErrorObject {
   };
 }
 
-function normalizeAddress(value: string): string {
-  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
 function propertyRecords(
   value: unknown,
 ): Array<{ path: string; property: Record<string, unknown> }> {
@@ -166,47 +162,6 @@ function ownershipSemanticErrors(value: unknown): ErrorObject[] {
       );
     };
     visit(property.ownership, `${path}/ownership`);
-
-    const situs = isRecord(property.address) ? property.address.value : undefined;
-    const mailing = isRecord(property.ownership.publicMailingAddress)
-      ? property.ownership.publicMailingAddress
-      : undefined;
-    if (
-      typeof situs !== "string" ||
-      mailing?.availability !== "available" ||
-      !isRecord(mailing.value)
-    ) {
-      continue;
-    }
-    const mailingValue = mailing.value;
-    const componentValue = (name: string): unknown => {
-      const fact = mailingValue[name];
-      return isRecord(fact) && fact.availability === "available" ? fact.value : undefined;
-    };
-    const addressLines = componentValue("addressLines");
-    const lineText = Array.isArray(addressLines)
-      ? addressLines.filter((line): line is string => typeof line === "string").join(" ")
-      : "";
-    const fullMailing = [
-      lineText,
-      componentValue("locality"),
-      componentValue("region"),
-      componentValue("postalCode"),
-      componentValue("country"),
-    ]
-      .filter((component): component is string => typeof component === "string")
-      .join(" ");
-    const normalizedSitus = normalizeAddress(situs);
-    if (
-      normalizedSitus.length > 0 &&
-      [lineText, fullMailing].some(
-        (candidate) => normalizeAddress(candidate) === normalizedSitus,
-      )
-    ) {
-      errors.push(
-        semanticError(`${path}/ownership/publicMailingAddress`, "situsMailingDistinct"),
-      );
-    }
   }
   return errors;
 }

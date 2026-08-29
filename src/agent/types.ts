@@ -55,6 +55,7 @@ export type NaturalLanguageQueryResult =
           | "ai_model_unavailable"
           | "model_error";
         message: string;
+        requestId?: string;
         retryAfterSeconds?: number;
       }>;
     }>;

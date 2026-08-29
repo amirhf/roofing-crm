@@ -568,6 +568,26 @@ textarea {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+.load-more-button {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--green);
+  color: var(--green);
+  background: transparent;
+  font-size: 10px;
+  font-weight: 850;
+  cursor: pointer;
+}
+.load-more-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.pagination-error {
+  margin: 8px 0;
+  color: #8e3f2f;
+  font-size: 10px;
+  line-height: 1.5;
+}
 .result-empty,
 .result-error {
   padding: 18px;
@@ -685,6 +705,62 @@ textarea {
   font-family: "Fraunces Variable", Georgia, serif;
   font-size: 17px;
 }
+.ownership-card {
+  border: 1px solid var(--line);
+  background: #f7f5ee;
+}
+.ownership-card .detail-grid {
+  margin: 0;
+}
+.owner-count {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+.owner-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  text-transform: none;
+}
+.evidence-references {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8px;
+  font-weight: 500;
+  text-transform: none;
+}
+.mailing-component-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  text-transform: none;
+}
+.mailing-component-list li > span,
+.mailing-component-list li > strong {
+  display: block;
+  font-size: 9px;
+  line-height: 1.4;
+}
+.mailing-component-list li > span {
+  color: var(--muted);
+}
+.public-record-notice {
+  margin: 0;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.6;
+}
 .permit-card {
   padding: 12px;
   border: 1px solid var(--line);
@@ -704,6 +780,29 @@ textarea {
 .evidence-list {
   display: grid;
   gap: 8px;
+}
+.freshness-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 0 10px;
+  background: var(--line);
+}
+.freshness-grid > div {
+  padding: 9px;
+  background: #f7f5ee;
+}
+.freshness-grid dt {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.freshness-grid dd {
+  margin: 3px 0 0;
+  font-size: 9px;
+  line-height: 1.4;
 }
 .evidence-card {
   display: flex;
