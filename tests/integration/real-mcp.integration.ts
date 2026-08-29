@@ -6,6 +6,7 @@ import {
   AGENT_ORACLE_TOOL_ALLOWLIST,
   runGroundedAgent,
 } from "../../src/agent/grounded-agent";
+import type { AgentSearchArguments } from "../../src/agent/schemas";
 import type {
   AgentModelOutput,
   NaturalLanguageQueryRequest,
@@ -96,6 +97,13 @@ const searchInput: SearchArguments = {
   page: { limit: 2 },
 };
 
+const modelSearchInput: AgentSearchArguments = {
+  radius: searchInput.radius,
+  filters: searchInput.filters,
+  sort: searchInput.sort,
+  page: { limit: searchInput.page.limit },
+};
+
 let firstPage: Extract<OracleResult<SearchResultData>, { ok: true }>;
 
 function object(value: unknown): Record<string, unknown> {
@@ -141,7 +149,7 @@ function generated(
   };
 }
 
-function toolCall(input: SearchArguments): LanguageModelV4GenerateResult {
+function toolCall(input: AgentSearchArguments): LanguageModelV4GenerateResult {
   return generated(
     [
       {
@@ -338,7 +346,7 @@ describe("mock model with real MCP", () => {
     const evidenceId = property.evidence[0]!.evidenceId;
     const output: AgentModelOutput = {
       status: "grounded",
-      filters: searchInput,
+      filters: modelSearchInput,
       propertyIds: [property.propertyId],
       evidenceRefs: [evidenceId],
       missingFields: [
@@ -358,11 +366,11 @@ describe("mock model with real MCP", () => {
       failure: null,
     };
     const model = new MockLanguageModelV4({
-      doGenerate: [toolCall(searchInput), finish(output)],
+      doGenerate: [toolCall(modelSearchInput), finish(output)],
     });
     const search = vi.spyOn(oracle, "searchRoofingOpportunities");
     const request: NaturalLanguageQueryRequest = {
-      query: "Find nearby older roofs and preserve unavailable contact fields.",
+      query: "Find nearby older roofs with explicit unavailable data.",
       searchContext: {
         county: "pasco",
         center: searchInput.center,

@@ -39,6 +39,7 @@ import {
   AgentBusyError,
   AgentGroundingError,
   AgentMcpError,
+  AgentPrivacyError,
   AgentResponseSizeError,
   AgentToolLimitError,
 } from "./errors";
@@ -162,6 +163,15 @@ function classifiedError(error: unknown): {
 } {
   if (error instanceof AgentBusyError) {
     return { body: errorResult("busy", error.message), status: 429 };
+  }
+  if (error instanceof AgentPrivacyError) {
+    return {
+      body: errorResult(
+        "invalid_request",
+        "The query contains details that cannot be safely sent to the model. Use the map controls for the search center and remove owner, contact, address, parcel, coordinate, or contractor values.",
+      ),
+      status: 400,
+    };
   }
   if (error instanceof AgentToolLimitError) {
     return { body: errorResult("tool_limit", error.message), status: 422 };

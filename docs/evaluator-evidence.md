@@ -64,5 +64,5 @@ This file defines required evidence locations. It contains no completed evidence
 - Vercel account/project ID and URL: **PENDING**
 - Neon connection string: **PENDING**
 - Deployed `ORACLE_MCP_URL`: **PENDING**
-- Oracle baseline source commit: **PENDING until baseline commit exists**
+- Oracle contract-source commit: `29da2fd4d7635bf6eefa1cc159600a18cdccea33` (**VERIFIED**)
 - Assignment-sent timestamp: **PENDING**

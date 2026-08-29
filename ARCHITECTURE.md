@@ -65,5 +65,5 @@ Freshness is displayed as source metadata. Explicit `observedAtOrAfter` or `publ
 - Vercel account/project ID and deployment URL: **PENDING**
 - Neon connection string: **PENDING**
 - Oracle deployed URL for `ORACLE_MCP_URL`: **PENDING**
-- Oracle source commit in `contracts/contract-lock.json`: **PENDING until baseline commit exists**
+- Oracle contract-source commit: `29da2fd4d7635bf6eefa1cc159600a18cdccea33` (**VERIFIED**)
 - Assignment-sent timestamp: **PENDING**

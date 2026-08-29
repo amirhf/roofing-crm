@@ -14,7 +14,10 @@ export type {
   NaturalLanguageQueryRequest,
 };
 
-export interface GroundedNaturalLanguageResult extends Omit<AgentModelOutput, "failure"> {
+export interface GroundedNaturalLanguageResult extends Omit<
+  AgentModelOutput,
+  "failure" | "filters"
+> {
   readonly status: "grounded" | "cannot_ground";
   readonly answer: string;
   readonly failure: Readonly<{

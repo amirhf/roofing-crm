@@ -35,3 +35,12 @@ export class AgentBusyError extends Error {
     this.name = "AgentBusyError";
   }
 }
+
+export class AgentPrivacyError extends Error {
+  constructor() {
+    super(
+      "The query contains caller text that cannot be safely normalized for model use.",
+    );
+    this.name = "AgentPrivacyError";
+  }
+}

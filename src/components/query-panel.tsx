@@ -308,7 +308,7 @@ export function QueryPanel() {
             maxLength={AGENT_BOUNDS.maxPromptCharacters}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onQueryKeyDown}
-            placeholder="Find properties within 8 miles of Zephyrhills with roofs at least 18 years old and an open roofing permit for 45+ days."
+            placeholder="Find properties within 8 miles of the selected center with roofs at least 18 years old and an open roofing permit for 45+ days."
             aria-describedby="query-help query-count"
           />
           <div className="query-meta">

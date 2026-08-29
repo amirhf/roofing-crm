@@ -27,6 +27,7 @@ import {
   OracleMcpResponseSizeError,
   OracleMcpTransportError,
 } from "../src/oracle/mcp-transport";
+import type { AgentSearchArguments } from "../src/agent/schemas";
 import type { SearchArguments } from "../src/oracle/types";
 
 const origin = "http://localhost:3000";
@@ -47,7 +48,7 @@ function request(path: string, method: string, body?: unknown, cookie?: string):
 }
 
 const queryInput = {
-  query: "Find older roofs near Zephyrhills",
+  query: "Find older roofs near the selected area",
   searchContext: {
     county: "pasco" as const,
     center: { kind: "place" as const, text: "Pasco County, Florida" },
@@ -134,6 +135,13 @@ describe("server APIs", () => {
 
   it("serves a grounded query through the API with an injected mock model", async () => {
     const input = searchRequest.arguments as unknown as SearchArguments;
+    const modelInput: AgentSearchArguments = {
+      radius: input.radius,
+      filters: input.filters,
+      sort: input.sort,
+      page: { limit: input.page.limit },
+      ...(input.asOf === undefined ? {} : { asOf: input.asOf }),
+    };
     const property = searchResponse.result.data.opportunities[0]!.property;
     const usage = {
       inputTokens: {
@@ -152,7 +160,7 @@ describe("server APIs", () => {
               type: "tool-call",
               toolCallId: "api-search",
               toolName: "prism_v1_search_roofing_opportunities",
-              input: JSON.stringify(input),
+              input: JSON.stringify(modelInput),
             },
           ],
           finishReason: { unified: "tool-calls", raw: undefined },
@@ -165,7 +173,7 @@ describe("server APIs", () => {
               type: "text",
               text: JSON.stringify({
                 status: "grounded",
-                filters: input,
+                filters: modelInput,
                 propertyIds: [property.propertyId],
                 evidenceRefs: [property.evidence[0]!.evidenceId],
                 missingFields: [],
@@ -210,6 +218,45 @@ describe("server APIs", () => {
     expect(attribution).not.toContain(queryInput.query);
     expect(attribution).not.toContain("Pasco County, Florida");
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("rejects ambiguous sensitive query text without model, Oracle, or telemetry exposure", async () => {
+    const sentinel = "AMBIGUOUS PRIVATE OWNER SENTINEL";
+    const model = new MockLanguageModelV4();
+    const oracle = new DevelopmentFixtureOracleClient("test");
+    const searchOracle = vi.spyOn(oracle, "searchRoofingOpportunities");
+    const recordError = vi.fn();
+    const config = configuredTestRuntime();
+    const handler = createQueryPostHandler({
+      loadConfig: () => config,
+      createModel: () => ({ provider: "mock", modelId: "test/mock", model }),
+      createOracle: () => oracle,
+      recordError,
+    });
+
+    const response = await handler(
+      request("/api/query", "POST", {
+        ...queryInput,
+        query: `owner name: ${sentinel}; mailing address: 991 Telemetry Secret Lane`,
+      }),
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).not.toContain(sentinel);
+    expect(JSON.parse(body)).toMatchObject({
+      status: "error",
+      error: { code: "invalid_request", requestId: expect.any(String) },
+    });
+    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(searchOracle).not.toHaveBeenCalled();
+    expect(JSON.stringify(recordError.mock.calls)).not.toContain(sentinel);
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "grounded_property_query",
+        errorClass: "AgentPrivacyError",
+      }),
+    );
   });
 
   it.each([

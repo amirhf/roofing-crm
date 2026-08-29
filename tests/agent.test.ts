@@ -8,12 +8,13 @@ import propertyResponseFixture from "../contracts/fixtures/property-response.jso
 import {
   AgentGroundingError,
   AgentMcpError,
+  AgentPrivacyError,
   AgentToolLimitError,
   AGENT_ORACLE_TOOL_ALLOWLIST,
   ContractValidationError,
   runGroundedAgent,
 } from "../src/agent/grounded-agent";
-import { AGENT_BOUNDS } from "../src/agent/schemas";
+import { AGENT_BOUNDS, type AgentSearchArguments } from "../src/agent/schemas";
 import type { AgentModelOutput, NaturalLanguageQueryRequest } from "../src/agent/types";
 import { DevelopmentFixtureOracleClient } from "../src/oracle/fixture-adapter";
 import type {
@@ -46,12 +47,19 @@ const searchInput: SearchArguments = {
   page: { limit: 10 },
 };
 
+const modelSearchInput: AgentSearchArguments = {
+  radius: searchInput.radius,
+  filters: searchInput.filters,
+  sort: searchInput.sort,
+  page: { limit: searchInput.page.limit },
+};
+
 const queryRequest: NaturalLanguageQueryRequest = {
   query:
     "Find homes within 8 miles of Zephyrhills with roofs at least 18 years old and open roofing permits for 45 days.",
   searchContext: {
     county: "pasco",
-    center: { kind: "place", text: "Pasco County, Florida" },
+    center: searchInput.center,
     radius: { value: 10, unit: "mi" },
     filters: {},
   },
@@ -92,7 +100,7 @@ function finish(output: AgentModelOutput): LanguageModelV4GenerateResult {
 function groundedOutput(overrides: Partial<AgentModelOutput> = {}): AgentModelOutput {
   return {
     status: "grounded",
-    filters: searchInput,
+    filters: modelSearchInput,
     propertyIds: [propertyId],
     evidenceRefs: [evidenceId],
     missingFields: [],
@@ -130,7 +138,7 @@ describe("grounded natural-language agent", () => {
       base.searchRoofingOpportunities(input),
     );
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish(groundedOutput()),
     );
 
@@ -172,6 +180,8 @@ describe("grounded natural-language agent", () => {
     expect(attribution).not.toContain("roofline_session");
     expect(attribution).not.toContain("EXAMPLE RECORD HOLDER");
     const modelTraffic = JSON.stringify(model.doGenerateCalls);
+    expect(modelTraffic).not.toContain(queryRequest.query);
+    expect(modelTraffic).not.toContain("Zephyrhills");
     expect(modelTraffic).not.toContain("EXAMPLE RECORD HOLDER ONE");
     expect(modelTraffic).not.toContain("900 EXAMPLE RECORD AVENUE");
     expect(modelTraffic).not.toContain("100 TEST WAY");
@@ -207,13 +217,126 @@ describe("grounded natural-language agent", () => {
     expect(modelTraffic).toContain('"count":2');
   });
 
+  it("keeps caller and server-held sensitive values out of every model invocation", async () => {
+    const privateCenter = {
+      kind: "coordinates" as const,
+      latitude: 28.1234567,
+      longitude: -82.7654321,
+    };
+    const privateRequest: NaturalLanguageQueryRequest = {
+      query:
+        "Find homes within 8 miles with roofs at least 18 years old and open roofing permits for 45 days; owner name: PRIVACY OWNER SENTINEL; phone: +1 (727) 555-0198; email: private.owner@privacy.invalid; street address: 742 Exact Pin Avenue; mailing address: PO Box 919; folio: FOLIO-PRIVACY-SENTINEL; parcel identifier: PARCEL-PRIVACY-SENTINEL; contractor name: PRIVACY CONTRACTOR SENTINEL",
+      searchContext: {
+        county: "pasco",
+        center: privateCenter,
+        radius: { value: 10, unit: "mi" },
+        filters: {},
+      },
+    };
+    const expectedSearch = { ...searchInput, center: privateCenter };
+    const base = fixtureOracle();
+    const search = vi.fn((input: SearchArguments) =>
+      base.searchRoofingOpportunities(input),
+    );
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+      finish(groundedOutput()),
+    );
+
+    await runGroundedAgent({
+      model,
+      oracleClient: withSearchOverride(search),
+      nodeEnvironment: "test",
+      sessionIdHash,
+      request: privateRequest,
+    });
+
+    expect(search).toHaveBeenCalledWith(
+      expectedSearch,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    const sentinels = [
+      String(privateCenter.latitude),
+      String(privateCenter.longitude),
+      "PRIVACY OWNER SENTINEL",
+      "+1 (727) 555-0198",
+      "private.owner@privacy.invalid",
+      "742 Exact Pin Avenue",
+      "PO Box 919",
+      "FOLIO-PRIVACY-SENTINEL",
+      "PARCEL-PRIVACY-SENTINEL",
+      "PRIVACY CONTRACTOR SENTINEL",
+    ];
+    model.doGenerateCalls.forEach((invocation) => {
+      const traffic = JSON.stringify(invocation);
+      sentinels.forEach((sentinel) => expect(traffic).not.toContain(sentinel));
+    });
+  });
+
+  it("keeps a server-held street-address center out of model traffic", async () => {
+    const privatePlace = "742 Server Held Avenue, Pasco, Florida";
+    const base = fixtureOracle();
+    const search = vi.fn((input: SearchArguments) =>
+      base.searchRoofingOpportunities(input),
+    );
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+      finish(groundedOutput()),
+    );
+
+    await runGroundedAgent({
+      model,
+      oracleClient: withSearchOverride(search),
+      nodeEnvironment: "test",
+      sessionIdHash,
+      request: {
+        ...queryRequest,
+        query:
+          "Find homes within 8 miles with roofs at least 18 years old and open roofing permits for 45 days.",
+        searchContext: {
+          ...queryRequest.searchContext,
+          center: { kind: "place", text: privatePlace },
+        },
+      },
+    });
+
+    expect(search).toHaveBeenCalledWith(
+      { ...searchInput, center: { kind: "place", text: privatePlace } },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    model.doGenerateCalls.forEach((invocation) =>
+      expect(JSON.stringify(invocation)).not.toContain(privatePlace),
+    );
+  });
+
+  it("rejects ambiguous caller text before the model or Oracle can receive it", async () => {
+    const oracle = fixtureOracle();
+    const search = vi.spyOn(oracle, "searchRoofingOpportunities");
+    const model = modelWith(finish(groundedOutput()));
+
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: {
+          ...queryRequest,
+          query: "Find roofs for Ambiguous Sentinel Holdings",
+        },
+      }),
+    ).rejects.toBeInstanceOf(AgentPrivacyError);
+    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(search).not.toHaveBeenCalled();
+  });
+
   it("delegates geospatial, roof-age, permit-age, and eligibility work to Oracle", async () => {
     const base = fixtureOracle();
     const search = vi.fn((input: SearchArguments) =>
       base.searchRoofingOpportunities(input),
     );
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish(groundedOutput()),
     );
 
@@ -237,6 +360,53 @@ describe("grounded natural-language agent", () => {
     expect(JSON.stringify(model.doGenerateCalls[0]?.prompt)).not.toContain(
       "distanceMeters",
     );
+  });
+
+  it("keeps the opaque MCP cursor server-side during bounded pagination", async () => {
+    const privateCursor = "cursor_private_server_state_28.1234567_-82.7654321";
+    const base = fixtureOracle();
+    const fixturePage = await base.searchRoofingOpportunities(searchInput);
+    if (!fixturePage.ok) throw new Error("Expected the fixture search to succeed.");
+    const firstPage = {
+      ...structuredClone(fixturePage),
+      meta: { ...fixturePage.meta, nextCursor: privateCursor },
+    };
+    const secondPage = {
+      ...structuredClone(fixturePage),
+      meta: { ...fixturePage.meta, nextCursor: null },
+    };
+    const search = vi
+      .fn<OracleClient["searchRoofingOpportunities"]>()
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce(secondPage);
+    const continuedModelInput: AgentSearchArguments = {
+      ...modelSearchInput,
+      page: { limit: modelSearchInput.page.limit, continuation: true },
+    };
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+      callTool(
+        "prism_v1_search_roofing_opportunities",
+        continuedModelInput,
+        "search-page-2",
+      ),
+      finish(groundedOutput()),
+    );
+
+    await runGroundedAgent({
+      model,
+      oracleClient: withSearchOverride(search),
+      nodeEnvironment: "test",
+      sessionIdHash,
+      request: queryRequest,
+    });
+
+    expect(search).toHaveBeenNthCalledWith(
+      2,
+      { ...searchInput, page: { limit: searchInput.page.limit, cursor: privateCursor } },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(JSON.stringify(model.doGenerateCalls)).not.toContain(privateCursor);
   });
 
   it("keeps missing permit, contractor, and BBB data explicit", async () => {
@@ -263,7 +433,7 @@ describe("grounded natural-language agent", () => {
       ],
     });
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish(output),
     );
     const result = await runGroundedAgent({
@@ -297,7 +467,7 @@ describe("grounded natural-language agent", () => {
       },
     ];
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish(groundedOutput({ missingFields })),
     );
     const result = await runGroundedAgent({
@@ -323,7 +493,7 @@ describe("grounded natural-language agent", () => {
     const search = vi.spyOn(oracle, "searchRoofingOpportunities");
     const model = modelWith(
       callTool("prism_v1_search_roofing_opportunities", {
-        ...searchInput,
+        ...modelSearchInput,
         radius: { value: "eight", unit: "mi" },
       }),
       finish(groundedOutput()),
@@ -345,7 +515,7 @@ describe("grounded natural-language agent", () => {
       async () => ({ ok: true, data: { opportunities: [] } }) as never,
     );
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish(groundedOutput()),
     );
     await expect(
@@ -370,7 +540,7 @@ describe("grounded natural-language agent", () => {
     ["evidence", groundedOutput({ evidenceRefs: ["ev_not_retrieved"] })],
   ])("rejects an unsupported %s instead of repairing it", async (_kind, output) => {
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish(output),
     );
     await expect(
@@ -453,7 +623,7 @@ describe("grounded natural-language agent", () => {
       getQuerySchema: () => base.getQuerySchema(),
     };
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       callTool("prism_v1_get_property", { propertyId: unrelatedId }, "property-2"),
       finish(groundedOutput({ propertyIds: [unrelatedId] })),
     );
@@ -487,7 +657,7 @@ describe("grounded natural-language agent", () => {
       getQuerySchema: () => base.getQuerySchema(),
     };
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       callTool("prism_v1_get_property", { propertyId: unrelatedId }, "property-b"),
       finish(groundedOutput({ evidenceRefs: ["ev_property_b"] })),
     );
@@ -516,7 +686,7 @@ describe("grounded natural-language agent", () => {
       getQuerySchema: () => base.getQuerySchema(),
     };
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       callTool("prism_v1_get_permit", { permitId: permit.data.permitId }, "permit-b"),
       finish(groundedOutput({ evidenceRefs: [permit.data.evidence[0]!.evidenceId] })),
     );
@@ -546,7 +716,7 @@ describe("grounded natural-language agent", () => {
       getQuerySchema: () => base.getQuerySchema(),
     };
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       callTool("prism_v1_get_property", { propertyId: unrelatedId }, "property-b"),
       finish(
         groundedOutput({
@@ -674,10 +844,10 @@ describe("grounded natural-language agent", () => {
 
   it("rejects no_results when a validated search returned a property", async () => {
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish({
         status: "cannot_ground",
-        filters: searchInput,
+        filters: modelSearchInput,
         propertyIds: [],
         evidenceRefs: [],
         missingFields: [],
@@ -697,7 +867,7 @@ describe("grounded natural-language agent", () => {
 
   it("rejects model-authored prose, invented facts, PII, and SQL", async () => {
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish({
         ...groundedOutput(),
         answer:
@@ -717,7 +887,7 @@ describe("grounded natural-language agent", () => {
 
   it("rejects model-authored owner and contact claims", async () => {
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish({
         ...groundedOutput(),
         ownerNames: ["Invented Owner"],
@@ -792,7 +962,7 @@ describe("grounded natural-language agent", () => {
       async () => await new Promise<never>(() => undefined),
     );
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
     );
     await expect(
       runGroundedAgent({
@@ -824,7 +994,7 @@ describe("grounded natural-language agent", () => {
     ) as unknown as OracleResult<SearchResultData>;
     const oracle = withSearchOverride(async () => failed);
     const model = modelWith(
-      callTool("prism_v1_search_roofing_opportunities", searchInput),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish(groundedOutput()),
     );
     await expect(

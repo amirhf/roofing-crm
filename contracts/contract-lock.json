@@ -96,5 +96,5 @@
     }
   ],
   "oracleBaselineSourceCommit": "29da2fd4d7635bf6eefa1cc159600a18cdccea33",
-  "oracleBaselineSourceCommitStatus": "pending until the synchronized Oracle v1.2.0 contract commit exists"
+  "oracleBaselineSourceCommitStatus": "verified synchronized Oracle v1.2.0 contract-source commit"
 }

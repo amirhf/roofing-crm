@@ -94,15 +94,13 @@ const filtersSchema = z
 
 export const agentSearchArgumentsSchema = z
   .object({
-    county: z.literal("pasco"),
-    center: z.discriminatedUnion("kind", [coordinatesSchema, placeSchema]),
     radius: radiusSchema,
     filters: filtersSchema,
     sort: z.enum(["distance_asc", "roof_age_desc", "permit_open_days_desc"]),
     page: z
       .object({
         limit: z.number().int().min(1).max(AGENT_BOUNDS.maxPageSize),
-        cursor: z.string().min(1).max(AGENT_BOUNDS.maxCursorCharacters).optional(),
+        continuation: z.literal(true).optional(),
       })
       .strict(),
     asOf: z.iso.datetime({ offset: true }).optional(),
@@ -200,5 +198,6 @@ export type NaturalLanguageQueryRequest = z.infer<
   typeof naturalLanguageQueryRequestSchema
 >;
 export type AgentModelOutput = z.infer<typeof agentModelOutputSchema>;
+export type AgentSearchArguments = z.infer<typeof agentSearchArgumentsSchema>;
 export type AgentFailureCode = z.infer<typeof groundingFailureSchema>["code"];
 export type MissingField = z.infer<typeof missingFieldSchema>;
