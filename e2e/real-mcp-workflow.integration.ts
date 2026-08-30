@@ -59,35 +59,28 @@ test("real MCP map, ownership labels, and anonymous lead workflow stay synchroni
   await expect(page.getByText("OpenStreetMap contributors")).toBeVisible();
   await page.getByRole("spinbutton", { name: "Radius miles" }).fill("50");
   await page.getByRole("spinbutton", { name: "Minimum roof age years" }).fill("0");
-  await page.getByRole("button", { name: "Search opportunities" }).click();
-  await expect(page.locator(".search-status")).not.toHaveClass(/loading/);
-  expect(searchRequests[0]).toMatchObject({
-    filters: {
-      permit: { roofingOnly: true, openOnly: true, minOpenDays: 30 },
-      matchMode: "all",
-    },
-    sort: "permit_open_days_desc",
-  });
-  const defaultResultReasons = await page.locator(".result-card small").allTextContents();
-  expect(
-    defaultResultReasons.every(
-      (reason) => reason.includes("roof age") && reason.includes("open roofing permit"),
-    ),
-  ).toBe(true);
-
-  await page.getByRole("checkbox", { name: "Require an open roofing permit" }).uncheck();
+  await expect(
+    page.getByRole("checkbox", { name: "Require an open roofing permit" }),
+  ).not.toBeChecked();
   await expect(
     page.getByRole("spinbutton", { name: "Minimum permit-open duration days" }),
   ).toBeDisabled();
   await page.getByRole("button", { name: "Search opportunities" }).click();
+  await expect(page.locator(".search-status")).not.toHaveClass(/loading/);
+  const defaultFilters = searchRequests[0]!.filters as Record<string, unknown>;
+  expect(defaultFilters.permit).toBeUndefined();
+  expect(defaultFilters.matchMode).toBe("all");
+  expect(searchRequests[0]!.sort).toBe("distance_asc");
+  const defaultResultReasons = await page.locator(".result-card small").allTextContents();
+  expect(
+    defaultResultReasons.every(
+      (reason) => reason.includes("roof age") && !reason.includes("open roofing permit"),
+    ),
+  ).toBe(true);
 
   await expect(page.locator(".search-status.success")).toContainText(
     /opportunit(?:y|ies) returned/,
   );
-  const secondFilters = searchRequests[1]!.filters as Record<string, unknown>;
-  expect(secondFilters.permit).toBeUndefined();
-  expect(secondFilters.matchMode).toBe("all");
-  expect(searchRequests[1]!.sort).toBe("distance_asc");
   let ids = (await resultIds(page)).map(sanitizedPropertyId);
   expect(ids.length).toBeGreaterThan(0);
   expect(new Set(ids).size).toBe(ids.length);
