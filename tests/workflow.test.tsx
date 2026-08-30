@@ -95,6 +95,7 @@ describe("primary workflow components", () => {
 
     await user.click(screen.getByRole("button", { name: "Place test pin" }));
     const radius = screen.getByRole("spinbutton", { name: "Radius miles" });
+    expect(radius).toHaveValue(15);
     await user.clear(radius);
     await user.type(radius, "12");
     const roofAge = screen.getByRole("spinbutton", {

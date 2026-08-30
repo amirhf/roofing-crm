@@ -108,7 +108,7 @@ export function RoofingCrm() {
   const [center, setCenter] = useState<MapPoint>(PASCO_CENTER);
   const [latitude, setLatitude] = useState(String(PASCO_CENTER.latitude));
   const [longitude, setLongitude] = useState(String(PASCO_CENTER.longitude));
-  const [radius, setRadius] = useState(5);
+  const [radius, setRadius] = useState(15);
   const [roofAge, setRoofAge] = useState(15);
   const [openPermits, setOpenPermits] = useState(false);
   const [minOpenDays, setMinOpenDays] = useState(30);
