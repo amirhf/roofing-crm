@@ -107,6 +107,56 @@ export const agentSearchArgumentsSchema = z
   })
   .strict();
 
+const agentModelSearchArgumentsSchema = z
+  .object({
+    radius: radiusSchema,
+    filters: z
+      .object({
+        roofAge: z
+          .object({
+            operator: z.enum(["gt", "gte"]),
+            years: z.number().int().min(0).max(100),
+            basis: z.enum(["direct_only", "direct_or_proxy"]),
+          })
+          .strict()
+          .nullable(),
+        permit: z
+          .object({
+            roofingOnly: z.boolean().nullable(),
+            openOnly: z.boolean().nullable(),
+            minOpenDays: z.number().int().min(0).max(36_500).nullable(),
+          })
+          .strict()
+          .nullable(),
+        ownership: z
+          .object({
+            operator: z.enum(["gt", "gte"]).nullable(),
+            years: z.number().int().min(0).max(500).nullable(),
+            ownerArea: z.enum(["any", "out_of_county", "out_of_state"]).nullable(),
+          })
+          .strict()
+          .nullable(),
+        freshness: z
+          .object({
+            observedAtOrAfter: z.iso.datetime({ offset: true }).nullable(),
+            publishedAtOrAfter: z.iso.datetime({ offset: true }).nullable(),
+          })
+          .strict()
+          .nullable(),
+        matchMode: z.enum(["all", "any"]).nullable(),
+      })
+      .strict(),
+    sort: z.enum(["distance_asc", "roof_age_desc", "permit_open_days_desc"]),
+    page: z
+      .object({
+        limit: z.number().int().min(1).max(AGENT_BOUNDS.maxPageSize),
+        continuation: z.literal(true).nullable(),
+      })
+      .strict(),
+    asOf: z.iso.datetime({ offset: true }).nullable(),
+  })
+  .strict();
+
 export const propertyIdSchema = z.string().regex(/^prop_[a-f0-9]{32}$/);
 export const permitIdSchema = z.string().regex(/^perm_[a-f0-9]{32}$/);
 
@@ -147,7 +197,7 @@ const groundingFailureSchema = z
 export const agentModelOutputSchema = z
   .object({
     status: z.enum(["grounded", "cannot_ground"]),
-    filters: agentSearchArgumentsSchema.nullable(),
+    filters: agentModelSearchArgumentsSchema.nullable(),
     propertyIds: z
       .array(propertyIdSchema)
       .max(AGENT_BOUNDS.maxPropertyIds)
@@ -199,5 +249,6 @@ export type NaturalLanguageQueryRequest = z.infer<
 >;
 export type AgentModelOutput = z.infer<typeof agentModelOutputSchema>;
 export type AgentSearchArguments = z.infer<typeof agentSearchArgumentsSchema>;
+export type AgentModelSearchArguments = z.infer<typeof agentModelSearchArgumentsSchema>;
 export type AgentFailureCode = z.infer<typeof groundingFailureSchema>["code"];
 export type MissingField = z.infer<typeof missingFieldSchema>;

@@ -6,7 +6,10 @@ import {
   AGENT_ORACLE_TOOL_ALLOWLIST,
   runGroundedAgent,
 } from "../../src/agent/grounded-agent";
-import type { AgentSearchArguments } from "../../src/agent/schemas";
+import type {
+  AgentModelSearchArguments,
+  AgentSearchArguments,
+} from "../../src/agent/schemas";
 import type {
   AgentModelOutput,
   NaturalLanguageQueryRequest,
@@ -102,6 +105,24 @@ const modelSearchInput: AgentSearchArguments = {
   filters: searchInput.filters,
   sort: searchInput.sort,
   page: { limit: searchInput.page.limit },
+};
+
+const modelReportedSearchInput: AgentModelSearchArguments = {
+  radius: searchInput.radius,
+  filters: {
+    roofAge: searchInput.filters.roofAge ?? null,
+    permit: {
+      roofingOnly: true,
+      openOnly: false,
+      minOpenDays: 0,
+    },
+    ownership: null,
+    freshness: null,
+    matchMode: "any",
+  },
+  sort: searchInput.sort,
+  page: { limit: searchInput.page.limit, continuation: null },
+  asOf: null,
 };
 
 let firstPage: Extract<OracleResult<SearchResultData>, { ok: true }>;
@@ -346,7 +367,7 @@ describe("mock model with real MCP", () => {
     const evidenceId = property.evidence[0]!.evidenceId;
     const output: AgentModelOutput = {
       status: "grounded",
-      filters: modelSearchInput,
+      filters: modelReportedSearchInput,
       propertyIds: [property.propertyId],
       evidenceRefs: [evidenceId],
       missingFields: [

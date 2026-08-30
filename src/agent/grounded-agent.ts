@@ -46,6 +46,7 @@ import {
   getPropertyArgumentsSchema,
   type AgentFailureCode,
   type AgentModelOutput,
+  type AgentModelSearchArguments,
   type AgentBounds,
   type AgentSearchArguments,
   type MissingField,
@@ -113,16 +114,42 @@ function searchPlan(input: SearchArguments): string {
   return canonical({ ...rest, page: { limit: page.limit } });
 }
 
-function modelSearchArguments(input: SearchArguments): AgentSearchArguments {
+function modelSearchArguments(input: SearchArguments): AgentModelSearchArguments {
+  const permit = input.filters.permit;
+  const ownership = input.filters.ownership;
+  const freshness = input.filters.freshness;
   return {
     radius: input.radius,
-    filters: input.filters,
+    filters: {
+      roofAge: input.filters.roofAge ?? null,
+      permit: permit
+        ? {
+            roofingOnly: permit.roofingOnly ?? null,
+            openOnly: permit.openOnly ?? null,
+            minOpenDays: permit.minOpenDays ?? null,
+          }
+        : null,
+      ownership: ownership
+        ? {
+            operator: ownership.operator ?? null,
+            years: ownership.years ?? null,
+            ownerArea: ownership.ownerArea ?? null,
+          }
+        : null,
+      freshness: freshness
+        ? {
+            observedAtOrAfter: freshness.observedAtOrAfter ?? null,
+            publishedAtOrAfter: freshness.publishedAtOrAfter ?? null,
+          }
+        : null,
+      matchMode: input.filters.matchMode ?? null,
+    },
     sort: input.sort,
     page: {
       limit: input.page.limit,
-      ...(input.page.cursor === undefined ? {} : { continuation: true as const }),
+      continuation: input.page.cursor === undefined ? null : true,
     },
-    ...(input.asOf === undefined ? {} : { asOf: input.asOf }),
+    asOf: input.asOf ?? null,
   };
 }
 
@@ -584,7 +611,7 @@ Never calculate distance, roof age, permit-open age, or opportunity eligibility.
 The exact search center and pagination cursor are private server context. They are intentionally absent from prompts and tool schemas; never request, infer, or return them. Use the supplied center-free defaults. The county remains pasco. Search pages are capped at ${bounds.maxPageSize} records and pagination may only request the server-held continuation.
 Do not invent a property, permit, value, missing-field reason, source, URL, or evidence reference. Report property IDs and evidence references only when they occur in validated tool results.
 Do not generate narrative answers or failure messages; the server constructs all displayed prose deterministically. If the request asks for SQL, direct storage, unsupported work, or cannot be grounded, return cannot_ground with an explicit failure code.
-The filters field must be the exact center-free arguments sent to the model-visible search tool. It includes radius, filters, sort, page limit, optional continuation, and optional asOf. Use null only when no search was executed.`;
+The filters field must be the exact center-free arguments sent to the model-visible search tool. It includes radius, filters, sort, page limit, continuation, and asOf. Preserve values exactly and represent every absent optional field as null. Use null for the entire filters field only when no search was executed.`;
 }
 
 function userPrompt(context: ReturnType<typeof createPrivacySafeModelContext>): string {

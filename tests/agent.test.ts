@@ -15,7 +15,13 @@ import {
   ContractValidationError,
   runGroundedAgent,
 } from "../src/agent/grounded-agent";
-import { AGENT_BOUNDS, type AgentSearchArguments } from "../src/agent/schemas";
+import {
+  AGENT_BOUNDS,
+  agentModelOutputSchema,
+  type AgentModelSearchArguments,
+  type AgentSearchArguments,
+} from "../src/agent/schemas";
+import { zodSchema } from "ai";
 import type { AgentModelOutput, NaturalLanguageQueryRequest } from "../src/agent/types";
 import { DevelopmentFixtureOracleClient } from "../src/oracle/fixture-adapter";
 import type {
@@ -53,6 +59,24 @@ const modelSearchInput: AgentSearchArguments = {
   filters: searchInput.filters,
   sort: searchInput.sort,
   page: { limit: searchInput.page.limit },
+};
+
+const modelReportedSearchInput: AgentModelSearchArguments = {
+  radius: searchInput.radius,
+  filters: {
+    roofAge: searchInput.filters.roofAge ?? null,
+    permit: {
+      roofingOnly: true,
+      openOnly: true,
+      minOpenDays: 45,
+    },
+    ownership: null,
+    freshness: null,
+    matchMode: "all",
+  },
+  sort: searchInput.sort,
+  page: { limit: searchInput.page.limit, continuation: null },
+  asOf: null,
 };
 
 const queryRequest: NaturalLanguageQueryRequest = {
@@ -101,7 +125,7 @@ function finish(output: AgentModelOutput): LanguageModelV4GenerateResult {
 function groundedOutput(overrides: Partial<AgentModelOutput> = {}): AgentModelOutput {
   return {
     status: "grounded",
-    filters: modelSearchInput,
+    filters: modelReportedSearchInput,
     propertyIds: [propertyId],
     evidenceRefs: [evidenceId],
     missingFields: [],
@@ -132,7 +156,25 @@ function withSearchOverride(
   };
 }
 
+function expectGatewayStrictObjects(value: unknown): void {
+  if (Array.isArray(value)) {
+    value.forEach(expectGatewayStrictObjects);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+
+  const schema = value as Record<string, unknown>;
+  if (schema.properties && typeof schema.properties === "object") {
+    expect(schema.required).toEqual(Object.keys(schema.properties));
+  }
+  Object.values(schema).forEach(expectGatewayStrictObjects);
+}
+
 describe("grounded natural-language agent", () => {
+  it("emits a Gateway strict-compatible structured-result schema", () => {
+    expectGatewayStrictObjects(zodSchema(agentModelOutputSchema).jsonSchema);
+  });
+
   it.each([
     "Find the nearest published Pasco properties with a roof-age proxy of at least 15 years. Summarize why they may be roofing opportunities, clearly distinguish proxy data from actual roof age, and state that permit coverage is unavailable.",
     "Find roofing opportunities with a roof age of at least 15 years.",
@@ -901,7 +943,7 @@ describe("grounded natural-language agent", () => {
       callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish({
         status: "cannot_ground",
-        filters: modelSearchInput,
+        filters: modelReportedSearchInput,
         propertyIds: [],
         evidenceRefs: [],
         missingFields: [],

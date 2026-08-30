@@ -27,7 +27,10 @@ import {
   OracleMcpResponseSizeError,
   OracleMcpTransportError,
 } from "../src/oracle/mcp-transport";
-import type { AgentSearchArguments } from "../src/agent/schemas";
+import type {
+  AgentModelSearchArguments,
+  AgentSearchArguments,
+} from "../src/agent/schemas";
 import type { SearchArguments } from "../src/oracle/types";
 
 const origin = "http://localhost:3000";
@@ -35,6 +38,42 @@ const createInput = {
   propertyId: "prop_e72ba795455c19d71ce4cb11f6177a5e",
   permitId: null,
 };
+
+function reportedSearchArguments(input: AgentSearchArguments): AgentModelSearchArguments {
+  return {
+    radius: input.radius,
+    filters: {
+      roofAge: input.filters.roofAge ?? null,
+      permit: input.filters.permit
+        ? {
+            roofingOnly: input.filters.permit.roofingOnly ?? null,
+            openOnly: input.filters.permit.openOnly ?? null,
+            minOpenDays: input.filters.permit.minOpenDays ?? null,
+          }
+        : null,
+      ownership: input.filters.ownership
+        ? {
+            operator: input.filters.ownership.operator ?? null,
+            years: input.filters.ownership.years ?? null,
+            ownerArea: input.filters.ownership.ownerArea ?? null,
+          }
+        : null,
+      freshness: input.filters.freshness
+        ? {
+            observedAtOrAfter: input.filters.freshness.observedAtOrAfter ?? null,
+            publishedAtOrAfter: input.filters.freshness.publishedAtOrAfter ?? null,
+          }
+        : null,
+      matchMode: input.filters.matchMode ?? null,
+    },
+    sort: input.sort,
+    page: {
+      limit: input.page.limit,
+      continuation: input.page.continuation ?? null,
+    },
+    asOf: input.asOf ?? null,
+  };
+}
 
 function request(path: string, method: string, body?: unknown, cookie?: string): Request {
   const headers = new Headers({ Origin: origin });
@@ -187,7 +226,7 @@ describe("server APIs", () => {
               type: "text",
               text: JSON.stringify({
                 status: "grounded",
-                filters: modelInput,
+                filters: reportedSearchArguments(modelInput),
                 propertyIds: [property.propertyId],
                 evidenceRefs: [property.evidence[0]!.evidenceId],
                 missingFields: [],
@@ -279,7 +318,7 @@ describe("server APIs", () => {
                 type: "text",
                 text: JSON.stringify({
                   status: "grounded",
-                  filters: modelInput,
+                  filters: reportedSearchArguments(modelInput),
                   propertyIds: [property.propertyId],
                   evidenceRefs: [property.evidence[0]!.evidenceId],
                   missingFields: [],
