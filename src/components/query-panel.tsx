@@ -14,7 +14,7 @@ type QueryState = "idle" | "loading" | "complete" | "not_configured" | "error";
 
 const PASCO_QUERY_CONTEXT: NaturalLanguageQueryRequest["searchContext"] = {
   county: "pasco",
-  center: { kind: "place", text: "Pasco County, Florida" },
+  center: { kind: "coordinates", latitude: 28.3232, longitude: -82.4319 },
   radius: { value: 10, unit: "mi" },
   filters: {},
 };

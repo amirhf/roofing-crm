@@ -94,9 +94,14 @@ describe("grounded query panel", () => {
     const requestBody = JSON.parse(
       String(vi.mocked(fetch).mock.calls[0]?.[1]?.body),
     ) as Record<string, unknown>;
-    expect(requestBody).toMatchObject({
+    expect(requestBody).toEqual({
       query: "Older roofs near Zephyrhills with open permits",
-      searchContext: { county: "pasco", radius: { value: 10, unit: "mi" } },
+      searchContext: {
+        county: "pasco",
+        center: { kind: "coordinates", latitude: 28.3232, longitude: -82.4319 },
+        radius: { value: 10, unit: "mi" },
+        filters: {},
+      },
     });
   });
 
@@ -141,9 +146,18 @@ describe("grounded query panel", () => {
       const requestBody = JSON.parse(
         String(vi.mocked(fetch).mock.calls[0]?.[1]?.body),
       ) as Record<string, unknown>;
-      expect(requestBody).toMatchObject({
+      expect(requestBody).toEqual({
         query,
-        searchContext: { county: "pasco", radius: { value: 10, unit: "mi" } },
+        searchContext: {
+          county: "pasco",
+          center: {
+            kind: "coordinates",
+            latitude: 28.3232,
+            longitude: -82.4319,
+          },
+          radius: { value: 10, unit: "mi" },
+          filters: {},
+        },
       });
     },
   );
