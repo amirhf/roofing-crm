@@ -191,13 +191,14 @@ describe("server APIs", () => {
 
   it("serves a grounded query through the API with an injected mock model", async () => {
     const input = searchRequest.arguments as unknown as SearchArguments;
-    const modelInput: AgentSearchArguments = {
+    const oraclePlan: AgentSearchArguments = {
       radius: input.radius,
       filters: input.filters,
       sort: input.sort,
       page: { limit: input.page.limit, continuation: false },
       ...(input.asOf === undefined ? {} : { asOf: input.asOf }),
     };
+    const modelInput = reportedSearchArguments(oraclePlan);
     const property = searchResponse.result.data.opportunities[0]!.property;
     const usage = {
       inputTokens: {
@@ -229,7 +230,7 @@ describe("server APIs", () => {
               type: "text",
               text: JSON.stringify({
                 status: "grounded",
-                filters: reportedSearchArguments(modelInput),
+                filters: modelInput,
                 propertyIds: [property.propertyId],
                 evidenceRefs: [property.evidence[0]!.evidenceId],
                 missingFields: [],
@@ -323,7 +324,7 @@ describe("server APIs", () => {
   ])(
     "progresses an exact bounded production query beyond intent validation: %s",
     async (query) => {
-      const modelInput: AgentSearchArguments = {
+      const oraclePlan: AgentSearchArguments = {
         radius: { value: 15, unit: "mi" },
         filters: {
           roofAge: { operator: "gte", years: 15, basis: "direct_or_proxy" },
@@ -331,6 +332,7 @@ describe("server APIs", () => {
         sort: "distance_asc",
         page: { limit: 3, continuation: false },
       };
+      const modelInput = reportedSearchArguments(oraclePlan);
       const property = searchResponse.result.data.opportunities[0]!.property;
       const usage = {
         inputTokens: {
@@ -362,7 +364,7 @@ describe("server APIs", () => {
                 type: "text",
                 text: JSON.stringify({
                   status: "grounded",
-                  filters: reportedSearchArguments(modelInput),
+                  filters: modelInput,
                   propertyIds: [property.propertyId],
                   evidenceRefs: [property.evidence[0]!.evidenceId],
                   missingFields: [],
@@ -400,7 +402,7 @@ describe("server APIs", () => {
           county: "pasco",
           center: queryInput.searchContext.center,
           radius: modelInput.radius,
-          filters: modelInput.filters,
+          filters: oraclePlan.filters,
           sort: modelInput.sort,
           page: { limit: modelInput.page.limit },
         },

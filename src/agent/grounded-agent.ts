@@ -41,14 +41,13 @@ import { createPrivacySafeModelContext } from "./privacy";
 import {
   AGENT_BOUNDS,
   agentModelOutputSchema,
-  agentSearchArgumentsSchema,
+  agentModelSearchArgumentsSchema,
   getPermitArgumentsSchema,
   getPropertyArgumentsSchema,
   type AgentFailureCode,
   type AgentModelOutput,
   type AgentModelSearchArguments,
   type AgentBounds,
-  type AgentSearchArguments,
   type MissingField,
   type NaturalLanguageQueryRequest,
 } from "./schemas";
@@ -150,6 +149,56 @@ function modelSearchArguments(input: SearchArguments): AgentModelSearchArguments
       continuation: false,
     },
     asOf: input.asOf ?? null,
+  };
+}
+
+function oracleFiltersFromModel(
+  filters: AgentModelSearchArguments["filters"],
+): SearchArguments["filters"] {
+  const permit =
+    filters.permit === null
+      ? undefined
+      : {
+          ...(filters.permit.roofingOnly === null
+            ? {}
+            : { roofingOnly: filters.permit.roofingOnly }),
+          ...(filters.permit.openOnly === null
+            ? {}
+            : { openOnly: filters.permit.openOnly }),
+          ...(filters.permit.minOpenDays === null
+            ? {}
+            : { minOpenDays: filters.permit.minOpenDays }),
+        };
+  const ownership =
+    filters.ownership === null
+      ? undefined
+      : {
+          ...(filters.ownership.operator === null
+            ? {}
+            : { operator: filters.ownership.operator }),
+          ...(filters.ownership.years === null ? {} : { years: filters.ownership.years }),
+          ...(filters.ownership.ownerArea === null
+            ? {}
+            : { ownerArea: filters.ownership.ownerArea }),
+        };
+  const freshness =
+    filters.freshness === null
+      ? undefined
+      : {
+          ...(filters.freshness.observedAtOrAfter === null
+            ? {}
+            : { observedAtOrAfter: filters.freshness.observedAtOrAfter }),
+          ...(filters.freshness.publishedAtOrAfter === null
+            ? {}
+            : { publishedAtOrAfter: filters.freshness.publishedAtOrAfter }),
+        };
+
+  return {
+    ...(filters.roofAge === null ? {} : { roofAge: filters.roofAge }),
+    ...(permit && Object.keys(permit).length > 0 ? { permit } : {}),
+    ...(ownership && Object.keys(ownership).length > 0 ? { ownership } : {}),
+    ...(freshness && Object.keys(freshness).length > 0 ? { freshness } : {}),
+    ...(filters.matchMode === null ? {} : { matchMode: filters.matchMode }),
   };
 }
 
@@ -638,7 +687,8 @@ Never calculate distance, roof age, permit-open age, or opportunity eligibility.
 The exact search center and pagination cursor are private server context. They are intentionally absent from prompts and tool schemas; never request, infer, or return them. Use the supplied center-free defaults. The county remains pasco. The model-visible search is always the initial page with continuation false. Only deterministic server state may follow a cursor returned by a validated Oracle response when more bounded results are needed.
 Do not invent a property, permit, value, missing-field reason, source, URL, or evidence reference. Report property IDs and evidence references only when they occur in validated tool results.
 Do not generate narrative answers or failure messages; the server constructs all displayed prose deterministically. If the request asks for SQL, direct storage, unsupported work, or cannot be grounded, return cannot_ground with an explicit failure code.
-The filters field must be the exact center-free arguments sent to the model-visible search tool. It includes radius, filters, sort, page limit, continuation, and asOf. Preserve values exactly and represent every absent optional field as null. Use null for the entire filters field only when no search was executed.`;
+The model-visible search tool uses a strict nullable plan: every key is required, and null means that an optional Oracle field is absent. Set an absent filter group to null; within a present group, set only absent leaves to null. Never encode absence with false, 0, any, or an epoch timestamp. The server removes nulls before calling Oracle.
+The filters field in the final result must exactly echo that center-free search plan. It includes radius, filters, sort, page limit, continuation, and asOf. Preserve values exactly. Use null for the entire filters field only when no search was executed.`;
 }
 
 function userPrompt(context: ReturnType<typeof createPrivacySafeModelContext>): string {
@@ -681,21 +731,21 @@ export async function runGroundedAgent({
   const tools = {
     prism_v1_search_roofing_opportunities: tool({
       description:
-        "Create the initial Pasco roofing-opportunity search plan around the private server-held center. Continuation is fixed to false; Oracle, not the model, calculates distance, roof age, permit duration, and eligibility.",
-      inputSchema: agentSearchArgumentsSchema,
+        "Create the initial Pasco roofing-opportunity search plan around the private server-held center. Use null for every absent optional group or field; never substitute neutral values. Continuation is fixed to false; Oracle, not the model, calculates distance, roof age, permit duration, and eligibility.",
+      inputSchema: agentModelSearchArgumentsSchema,
       execute: async (input, { abortSignal }) => {
-        const modelInput = input as AgentSearchArguments;
+        const modelInput = input as AgentModelSearchArguments;
         ledger.claimInitialSearchPlan();
         const searchInput: SearchArguments = {
           county: request.searchContext.county,
           center: request.searchContext.center,
           radius: modelInput.radius,
-          filters: modelInput.filters as SearchArguments["filters"],
+          filters: oracleFiltersFromModel(modelInput.filters),
           sort: modelInput.sort,
           page: {
             limit: modelInput.page.limit,
           },
-          ...(modelInput.asOf === undefined ? {} : { asOf: modelInput.asOf }),
+          ...(modelInput.asOf === null ? {} : { asOf: modelInput.asOf }),
         };
         const initialResult = await invoke(
           "prism_v1_search_roofing_opportunities",

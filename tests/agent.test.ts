@@ -17,10 +17,9 @@ import {
 } from "../src/agent/grounded-agent";
 import {
   AGENT_BOUNDS,
+  agentModelSearchArgumentsSchema,
   agentModelOutputSchema,
-  agentSearchArgumentsSchema,
   type AgentModelSearchArguments,
-  type AgentSearchArguments,
 } from "../src/agent/schemas";
 import { zodSchema } from "ai";
 import type { AgentModelOutput, NaturalLanguageQueryRequest } from "../src/agent/types";
@@ -55,14 +54,7 @@ const searchInput: SearchArguments = {
   page: { limit: 10 },
 };
 
-const modelSearchInput: AgentSearchArguments = {
-  radius: searchInput.radius,
-  filters: searchInput.filters,
-  sort: searchInput.sort,
-  page: { limit: searchInput.page.limit, continuation: false },
-};
-
-const modelReportedSearchInput: AgentModelSearchArguments = {
+const modelSearchInput: AgentModelSearchArguments = {
   radius: searchInput.radius,
   filters: {
     roofAge: searchInput.filters.roofAge ?? null,
@@ -79,6 +71,8 @@ const modelReportedSearchInput: AgentModelSearchArguments = {
   page: { limit: searchInput.page.limit, continuation: false },
   asOf: null,
 };
+
+const modelReportedSearchInput = modelSearchInput;
 
 const queryRequest: NaturalLanguageQueryRequest = {
   query:
@@ -173,7 +167,7 @@ function expectGatewayStrictObjects(value: unknown): void {
 
 describe("grounded natural-language agent", () => {
   it("makes the model-visible search plan explicitly initial-only", () => {
-    const schema = zodSchema(agentSearchArgumentsSchema).jsonSchema as {
+    const schema = zodSchema(agentModelSearchArgumentsSchema).jsonSchema as {
       properties: {
         page: {
           properties: { continuation: { const: boolean } };
@@ -184,6 +178,27 @@ describe("grounded natural-language agent", () => {
 
     expect(schema.properties.page.required).toContain("continuation");
     expect(schema.properties.page.properties.continuation.const).toBe(false);
+  });
+
+  it("uses a strict nullable model search schema without private execution state", () => {
+    const schema = zodSchema(agentModelSearchArgumentsSchema).jsonSchema;
+    const serialized = JSON.stringify(schema);
+
+    expectGatewayStrictObjects(schema);
+    expect(serialized).not.toContain('"center"');
+    expect(serialized).not.toContain('"county"');
+    expect(serialized).not.toContain('"cursor"');
+    expect(agentModelSearchArgumentsSchema.safeParse(modelSearchInput).success).toBe(
+      true,
+    );
+    expect(
+      agentModelSearchArgumentsSchema.safeParse({
+        radius: modelSearchInput.radius,
+        filters: {},
+        sort: modelSearchInput.sort,
+        page: modelSearchInput.page,
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects model-controlled first-page continuation before Oracle", async () => {
@@ -322,13 +337,18 @@ describe("grounded natural-language agent", () => {
   it("executes the exact production query as one server-authored initial search", async () => {
     const exactQuery =
       "Find the nearest properties within 15 miles with roofs at least 15 years old. Return at most 3 results.";
-    const exactModelInput: AgentSearchArguments = {
+    const exactModelInput: AgentModelSearchArguments = {
       radius: { value: 15, unit: "mi" },
       filters: {
         roofAge: { operator: "gte", years: 15, basis: "direct_or_proxy" },
+        permit: null,
+        ownership: null,
+        freshness: null,
+        matchMode: null,
       },
       sort: "distance_asc",
       page: { limit: 3, continuation: false },
+      asOf: null,
     };
     const exactReportedInput: AgentModelSearchArguments = {
       radius: exactModelInput.radius,
@@ -676,7 +696,7 @@ describe("grounded natural-language agent", () => {
       ...structuredClone(fixturePage),
       meta: { ...fixturePage.meta, nextCursor: privateCursor },
     });
-    const limitedModelInput: AgentSearchArguments = {
+    const limitedModelInput: AgentModelSearchArguments = {
       ...modelSearchInput,
       page: { limit: 1, continuation: false },
     };

@@ -6,10 +6,7 @@ import {
   AGENT_ORACLE_TOOL_ALLOWLIST,
   runGroundedAgent,
 } from "../../src/agent/grounded-agent";
-import type {
-  AgentModelSearchArguments,
-  AgentSearchArguments,
-} from "../../src/agent/schemas";
+import type { AgentModelSearchArguments } from "../../src/agent/schemas";
 import type {
   AgentModelOutput,
   NaturalLanguageQueryRequest,
@@ -100,14 +97,7 @@ const searchInput: SearchArguments = {
   page: { limit: 2 },
 };
 
-const modelSearchInput: AgentSearchArguments = {
-  radius: searchInput.radius,
-  filters: searchInput.filters,
-  sort: searchInput.sort,
-  page: { limit: searchInput.page.limit, continuation: false },
-};
-
-const modelReportedSearchInput: AgentModelSearchArguments = {
+const modelSearchInput: AgentModelSearchArguments = {
   radius: searchInput.radius,
   filters: {
     roofAge: searchInput.filters.roofAge ?? null,
@@ -124,6 +114,8 @@ const modelReportedSearchInput: AgentModelSearchArguments = {
   page: { limit: searchInput.page.limit, continuation: false },
   asOf: null,
 };
+
+const modelReportedSearchInput = modelSearchInput;
 
 let firstPage: Extract<OracleResult<SearchResultData>, { ok: true }>;
 
@@ -170,7 +162,7 @@ function generated(
   };
 }
 
-function toolCall(input: AgentSearchArguments): LanguageModelV4GenerateResult {
+function toolCall(input: AgentModelSearchArguments): LanguageModelV4GenerateResult {
   return generated(
     [
       {

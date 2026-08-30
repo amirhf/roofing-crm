@@ -128,7 +128,7 @@ export const agentSearchArgumentsSchema = z
   })
   .strict();
 
-const agentModelSearchArgumentsSchema = z
+export const agentModelSearchArgumentsSchema = z
   .object({
     radius: radiusSchema,
     filters: z
