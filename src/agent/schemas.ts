@@ -12,6 +12,7 @@ export const AGENT_BOUNDS = Object.freeze({
   toolDeadlineMs: 45_000,
   maxMcpResponseBytes: 131_072,
   maxTotalMcpResponseBytes: 262_144,
+  maxModelOutputTokens: 2_000,
   maxAnswerCharacters: 600,
   maxPropertyIds: 25,
   maxEvidenceReferences: 100,

@@ -851,7 +851,7 @@ export async function runGroundedAgent({
     }),
     stopWhen: isStepCount(bounds.maxSteps),
     maxRetries: 0,
-    maxOutputTokens: 800,
+    maxOutputTokens: bounds.maxModelOutputTokens,
     temperature: 0,
     providerOptions: {
       gateway: {

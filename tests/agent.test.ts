@@ -201,6 +201,11 @@ describe("grounded natural-language agent", () => {
     ).toBe(false);
   });
 
+  it("keeps structured result generation above the observed truncation point and bounded", () => {
+    expect(AGENT_BOUNDS.maxModelOutputTokens).toBeGreaterThan(800);
+    expect(AGENT_BOUNDS.maxModelOutputTokens).toBeLessThanOrEqual(2_000);
+  });
+
   it("rejects model-controlled first-page continuation before Oracle", async () => {
     const oracle = fixtureOracle();
     const search = vi.spyOn(oracle, "searchRoofingOpportunities");
@@ -443,6 +448,9 @@ describe("grounded natural-language agent", () => {
     );
     expect(model.doGenerateCalls[0]?.tools?.map((entry) => entry.name)).toEqual(
       AGENT_ORACLE_TOOL_ALLOWLIST,
+    );
+    expect(model.doGenerateCalls.every((call) => call.maxOutputTokens === 2_000)).toBe(
+      true,
     );
     expect(model.doGenerateCalls.every((call) => call.providerOptions)).toBe(true);
     expect(model.doGenerateCalls[0]?.providerOptions).toEqual({
