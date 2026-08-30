@@ -117,6 +117,12 @@ function GroundedResult({ result }: Readonly<{ result: GroundedNaturalLanguageRe
           {result.status === "grounded" ? "Grounding proven" : "Unable to ground"}
         </p>
         <h2>{result.answer}</h2>
+        {result.status === "grounded" ? (
+          <p className="agent-publication-note">
+            Candidate publication only. Results are not authoritative-complete Pasco
+            coverage.
+          </p>
+        ) : null}
         {result.failure ? (
           <p className="agent-failure">
             <strong>{result.failure.code.replaceAll("_", " ")}:</strong>{" "}

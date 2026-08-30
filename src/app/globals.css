@@ -1103,6 +1103,12 @@ textarea {
   font-weight: 600;
   line-height: 1.12;
 }
+.agent-publication-note {
+  grid-column: 2;
+  margin: -12px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
 .agent-failure {
   grid-column: 2;
   margin: -12px 0 0;

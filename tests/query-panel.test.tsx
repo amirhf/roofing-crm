@@ -82,6 +82,11 @@ describe("grounded query panel", () => {
 
     expect(await screen.findByText("Grounding proven")).toBeInTheDocument();
     expect(
+      screen.getByText(
+        "Candidate publication only. Results are not authoritative-complete Pasco coverage.",
+      ),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("heading", {
         name: "100 TEST WAY, FIXTURE ZEPHYRHILLS, FL 33540",
       }),
