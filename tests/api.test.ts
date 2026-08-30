@@ -234,6 +234,96 @@ describe("server APIs", () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    "Find the nearest published Pasco roofing opportunities within 15 miles with roofs at least 15 years old. Explain the proxy basis and available permit coverage. Return at most 3 results.",
+    "Find the nearest properties within 15 miles with roofs at least 15 years old. Return at most 3 results.",
+  ])(
+    "progresses an exact bounded production query beyond intent validation: %s",
+    async (query) => {
+      const modelInput: AgentSearchArguments = {
+        radius: { value: 15, unit: "mi" },
+        filters: {
+          roofAge: { operator: "gte", years: 15, basis: "direct_or_proxy" },
+        },
+        sort: "distance_asc",
+        page: { limit: 3 },
+      };
+      const property = searchResponse.result.data.opportunities[0]!.property;
+      const usage = {
+        inputTokens: {
+          total: 1,
+          noCache: 1,
+          cacheRead: undefined,
+          cacheWrite: undefined,
+        },
+        outputTokens: { total: 1, text: 1, reasoning: undefined },
+      };
+      const model = new MockLanguageModelV4({
+        doGenerate: [
+          {
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "bounded-production-search",
+                toolName: "prism_v1_search_roofing_opportunities",
+                input: JSON.stringify(modelInput),
+              },
+            ],
+            finishReason: { unified: "tool-calls", raw: undefined },
+            usage,
+            warnings: [],
+          },
+          {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  status: "grounded",
+                  filters: modelInput,
+                  propertyIds: [property.propertyId],
+                  evidenceRefs: [property.evidence[0]!.evidenceId],
+                  missingFields: [],
+                  failure: null,
+                }),
+              },
+            ],
+            finishReason: { unified: "stop", raw: undefined },
+            usage,
+            warnings: [],
+          },
+        ],
+      });
+      const oracle = new DevelopmentFixtureOracleClient("test");
+      const searchOracle = vi.spyOn(oracle, "searchRoofingOpportunities");
+      const handler = createQueryPostHandler({
+        loadConfig: configuredTestRuntime,
+        createModel: () => ({ provider: "mock", modelId: "test/mock", model }),
+        createOracle: () => oracle,
+      });
+
+      const response = await handler(
+        request("/api/query", "POST", { ...queryInput, query }),
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        status: "complete",
+        grounded: { status: "grounded", propertyIds: [property.propertyId] },
+      });
+      expect(model.doGenerateCalls).toHaveLength(2);
+      expect(searchOracle).toHaveBeenCalledOnce();
+      expect(searchOracle).toHaveBeenCalledWith(
+        {
+          county: "pasco",
+          center: queryInput.searchContext.center,
+          ...modelInput,
+        },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(JSON.stringify(model.doGenerateCalls)).not.toContain(query);
+    },
+  );
+
   it("rejects ambiguous sensitive query text without model, Oracle, or telemetry exposure", async () => {
     const sentinel = "AMBIGUOUS PRIVATE OWNER SENTINEL";
     const model = new MockLanguageModelV4();

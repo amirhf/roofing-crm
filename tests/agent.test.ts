@@ -137,6 +137,8 @@ describe("grounded natural-language agent", () => {
     "Find the nearest published Pasco properties with a roof-age proxy of at least 15 years. Summarize why they may be roofing opportunities, clearly distinguish proxy data from actual roof age, and state that permit coverage is unavailable.",
     "Find roofing opportunities with a roof age of at least 15 years.",
     "Find properties within 8 miles of the selected center with roofs at least 18 years old and an open roofing permit for 45+ days.",
+    "Find the nearest published Pasco roofing opportunities within 15 miles with roofs at least 15 years old. Explain the proxy basis and available permit coverage. Return at most 3 results.",
+    "Find the nearest properties within 15 miles with roofs at least 15 years old. Return at most 3 results.",
   ])("accepts canonical production-safe caller intent: %s", async (query) => {
     const base = fixtureOracle();
     const search = vi.fn((input: SearchArguments) =>

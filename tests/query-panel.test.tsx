@@ -119,6 +119,36 @@ describe("grounded query panel", () => {
   });
 
   it.each([
+    "Find the nearest published Pasco roofing opportunities within 15 miles with roofs at least 15 years old. Explain the proxy basis and available permit coverage. Return at most 3 results.",
+    "Find the nearest properties within 15 miles with roofs at least 15 years old. Return at most 3 results.",
+  ])(
+    "serializes an exact bounded production query without rewriting it: %s",
+    async (query) => {
+      const user = userEvent.setup();
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(JSON.stringify(completeResult), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      render(<QueryPanel />);
+
+      await user.type(screen.getByLabelText("Natural-language request"), query);
+      await user.click(screen.getByRole("button", { name: "Run grounded query" }));
+
+      expect(await screen.findByText("Grounding proven")).toBeInTheDocument();
+      expect(fetch).toHaveBeenCalledOnce();
+      const requestBody = JSON.parse(
+        String(vi.mocked(fetch).mock.calls[0]?.[1]?.body),
+      ) as Record<string, unknown>;
+      expect(requestBody).toMatchObject({
+        query,
+        searchContext: { county: "pasco", radius: { value: 10, unit: "mi" } },
+      });
+    },
+  );
+
+  it.each([
     ["grounding_rejected", "Unsupported claim rejected"],
     ["timeout", "Query timed out"],
     ["mcp_error", "Oracle MCP unavailable"],

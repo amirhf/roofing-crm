@@ -8,6 +8,10 @@ const productionRequest =
 const simpleRequest = "Find roofing opportunities with a roof age of at least 15 years.";
 const placeholderRequest =
   "Find properties within 8 miles of the selected center with roofs at least 18 years old and an open roofing permit for 45+ days.";
+const boundedProductionRequest =
+  "Find the nearest published Pasco roofing opportunities within 15 miles with roofs at least 15 years old. Explain the proxy basis and available permit coverage. Return at most 3 results.";
+const boundedSimpleRequest =
+  "Find the nearest properties within 15 miles with roofs at least 15 years old. Return at most 3 results.";
 
 function request(query: string): NaturalLanguageQueryRequest {
   return {
@@ -76,4 +80,29 @@ describe("privacy-safe query canonicalization", () => {
     });
     expect(JSON.stringify(context)).not.toContain(query);
   });
+
+  it.each([boundedProductionRequest, boundedSimpleRequest])(
+    "accepts an exact bounded production query: %s",
+    (query) => {
+      const context = createPrivacySafeModelContext(request(query));
+
+      expect(context.intent).toMatchObject({
+        kind: "roofing_opportunity_search",
+        terms: expect.arrayContaining([
+          "search",
+          "distance_sort",
+          "radius_constraint",
+          "roof_age",
+          "maximum",
+          "result_limit",
+        ]),
+        measurements: [
+          { kind: "distance", value: 15, unit: "mi" },
+          { kind: "years", value: 15, unit: "years" },
+          { kind: "result_limit", value: 3, unit: "results" },
+        ],
+      });
+      expect(JSON.stringify(context)).not.toContain(query);
+    },
+  );
 });
