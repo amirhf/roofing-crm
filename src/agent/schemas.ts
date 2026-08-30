@@ -100,7 +100,7 @@ export const agentSearchArgumentsSchema = z
     page: z
       .object({
         limit: z.number().int().min(1).max(AGENT_BOUNDS.maxPageSize),
-        continuation: z.literal(true).optional(),
+        continuation: z.literal(false),
       })
       .strict(),
     asOf: z.iso.datetime({ offset: true }).optional(),
@@ -150,7 +150,7 @@ const agentModelSearchArgumentsSchema = z
     page: z
       .object({
         limit: z.number().int().min(1).max(AGENT_BOUNDS.maxPageSize),
-        continuation: z.literal(true).nullable(),
+        continuation: z.literal(false),
       })
       .strict(),
     asOf: z.iso.datetime({ offset: true }).nullable(),

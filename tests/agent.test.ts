@@ -18,6 +18,7 @@ import {
 import {
   AGENT_BOUNDS,
   agentModelOutputSchema,
+  agentSearchArgumentsSchema,
   type AgentModelSearchArguments,
   type AgentSearchArguments,
 } from "../src/agent/schemas";
@@ -58,7 +59,7 @@ const modelSearchInput: AgentSearchArguments = {
   radius: searchInput.radius,
   filters: searchInput.filters,
   sort: searchInput.sort,
-  page: { limit: searchInput.page.limit },
+  page: { limit: searchInput.page.limit, continuation: false },
 };
 
 const modelReportedSearchInput: AgentModelSearchArguments = {
@@ -75,7 +76,7 @@ const modelReportedSearchInput: AgentModelSearchArguments = {
     matchMode: "all",
   },
   sort: searchInput.sort,
-  page: { limit: searchInput.page.limit, continuation: null },
+  page: { limit: searchInput.page.limit, continuation: false },
   asOf: null,
 };
 
@@ -171,6 +172,106 @@ function expectGatewayStrictObjects(value: unknown): void {
 }
 
 describe("grounded natural-language agent", () => {
+  it("makes the model-visible search plan explicitly initial-only", () => {
+    const schema = zodSchema(agentSearchArgumentsSchema).jsonSchema as {
+      properties: {
+        page: {
+          properties: { continuation: { const: boolean } };
+          required: string[];
+        };
+      };
+    };
+
+    expect(schema.properties.page.required).toContain("continuation");
+    expect(schema.properties.page.properties.continuation.const).toBe(false);
+  });
+
+  it("rejects model-controlled first-page continuation before Oracle", async () => {
+    const oracle = fixtureOracle();
+    const search = vi.spyOn(oracle, "searchRoofingOpportunities");
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", {
+        ...modelSearchInput,
+        page: { limit: modelSearchInput.page.limit, continuation: true },
+      }),
+      finish(groundedOutput()),
+    );
+
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toMatchObject({ name: "AgentInvalidToolArgumentsError" });
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it("allows only one model-visible initial search plan", async () => {
+    const oracle = fixtureOracle();
+    const search = vi.spyOn(oracle, "searchRoofingOpportunities");
+    const model = modelWith(
+      generated(
+        [
+          {
+            type: "tool-call",
+            toolCallId: "initial-search-1",
+            toolName: "prism_v1_search_roofing_opportunities",
+            input: JSON.stringify(modelSearchInput),
+          },
+          {
+            type: "tool-call",
+            toolCallId: "initial-search-2",
+            toolName: "prism_v1_search_roofing_opportunities",
+            input: JSON.stringify(modelSearchInput),
+          },
+        ],
+        "tool-calls",
+      ),
+      finish(groundedOutput()),
+    );
+
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentToolLimitError);
+    expect(search.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+
+  it("rejects a fabricated model cursor before Oracle", async () => {
+    const oracle = fixtureOracle();
+    const search = vi.spyOn(oracle, "searchRoofingOpportunities");
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", {
+        ...modelSearchInput,
+        page: {
+          limit: modelSearchInput.page.limit,
+          continuation: false,
+          cursor: "cursor_fabricated_by_model",
+        },
+      }),
+      finish(groundedOutput()),
+    );
+
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toMatchObject({ name: "AgentInvalidToolArgumentsError" });
+    expect(search).not.toHaveBeenCalled();
+  });
+
   it("emits a Gateway strict-compatible structured-result schema", () => {
     expectGatewayStrictObjects(zodSchema(agentModelOutputSchema).jsonSchema);
   });
@@ -216,6 +317,76 @@ describe("grounded natural-language agent", () => {
       expect(traffic).not.toContain(String(privateCenter.latitude));
       expect(traffic).not.toContain(String(privateCenter.longitude));
     });
+  });
+
+  it("executes the exact production query as one server-authored initial search", async () => {
+    const exactQuery =
+      "Find the nearest properties within 15 miles with roofs at least 15 years old. Return at most 3 results.";
+    const exactModelInput: AgentSearchArguments = {
+      radius: { value: 15, unit: "mi" },
+      filters: {
+        roofAge: { operator: "gte", years: 15, basis: "direct_or_proxy" },
+      },
+      sort: "distance_asc",
+      page: { limit: 3, continuation: false },
+    };
+    const exactReportedInput: AgentModelSearchArguments = {
+      radius: exactModelInput.radius,
+      filters: {
+        roofAge: exactModelInput.filters.roofAge ?? null,
+        permit: null,
+        ownership: null,
+        freshness: null,
+        matchMode: null,
+      },
+      sort: "distance_asc",
+      page: { limit: 3, continuation: false },
+      asOf: null,
+    };
+    const base = fixtureOracle();
+    const search = vi.fn((input: SearchArguments) =>
+      base.searchRoofingOpportunities(input),
+    );
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", exactModelInput),
+      finish(groundedOutput({ filters: exactReportedInput })),
+    );
+    const privateCenter = {
+      kind: "coordinates" as const,
+      latitude: 28.1976543,
+      longitude: -82.3987654,
+    };
+
+    await runGroundedAgent({
+      model,
+      oracleClient: withSearchOverride(search),
+      nodeEnvironment: "test",
+      sessionIdHash,
+      request: {
+        ...queryRequest,
+        query: exactQuery,
+        searchContext: { ...queryRequest.searchContext, center: privateCenter },
+      },
+    });
+
+    expect(search).toHaveBeenCalledOnce();
+    expect(search.mock.calls[0]?.[0]).toEqual({
+      county: "pasco",
+      center: privateCenter,
+      radius: { value: 15, unit: "mi" },
+      filters: {
+        roofAge: { operator: "gte", years: 15, basis: "direct_or_proxy" },
+      },
+      sort: "distance_asc",
+      page: { limit: 3 },
+    });
+    expect(JSON.stringify(model.doGenerateCalls)).not.toContain(exactQuery);
+    expect(JSON.stringify(model.doGenerateCalls)).not.toContain(
+      String(privateCenter.latitude),
+    );
+    expect(JSON.stringify(model.doGenerateCalls)).not.toContain(
+      String(privateCenter.longitude),
+    );
   });
 
   it("translates a normal radius, roof-age, and open-permit request into exact MCP inputs", async () => {
@@ -475,17 +646,8 @@ describe("grounded natural-language agent", () => {
       .fn<OracleClient["searchRoofingOpportunities"]>()
       .mockResolvedValueOnce(firstPage)
       .mockResolvedValueOnce(secondPage);
-    const continuedModelInput: AgentSearchArguments = {
-      ...modelSearchInput,
-      page: { limit: modelSearchInput.page.limit, continuation: true },
-    };
     const model = modelWith(
       callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
-      callTool(
-        "prism_v1_search_roofing_opportunities",
-        continuedModelInput,
-        "search-page-2",
-      ),
       finish(groundedOutput()),
     );
 
@@ -502,6 +664,41 @@ describe("grounded natural-language agent", () => {
       { ...searchInput, page: { limit: searchInput.page.limit, cursor: privateCursor } },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    expect(JSON.stringify(model.doGenerateCalls)).not.toContain(privateCursor);
+  });
+
+  it("ignores a validated next cursor once the requested limit is satisfied", async () => {
+    const privateCursor = "cursor_ignored_after_limit_is_satisfied";
+    const base = fixtureOracle();
+    const fixturePage = await base.searchRoofingOpportunities(searchInput);
+    if (!fixturePage.ok) throw new Error("Expected the fixture search to succeed.");
+    const search = vi.fn<OracleClient["searchRoofingOpportunities"]>().mockResolvedValue({
+      ...structuredClone(fixturePage),
+      meta: { ...fixturePage.meta, nextCursor: privateCursor },
+    });
+    const limitedModelInput: AgentSearchArguments = {
+      ...modelSearchInput,
+      page: { limit: 1, continuation: false },
+    };
+    const limitedReportedInput: AgentModelSearchArguments = {
+      ...modelReportedSearchInput,
+      page: { limit: 1, continuation: false },
+    };
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", limitedModelInput),
+      finish(groundedOutput({ filters: limitedReportedInput })),
+    );
+
+    await runGroundedAgent({
+      model,
+      oracleClient: withSearchOverride(search),
+      nodeEnvironment: "test",
+      sessionIdHash,
+      request: queryRequest,
+    });
+
+    expect(search).toHaveBeenCalledOnce();
+    expect(search.mock.calls[0]?.[0].page).toEqual({ limit: 1 });
     expect(JSON.stringify(model.doGenerateCalls)).not.toContain(privateCursor);
   });
 

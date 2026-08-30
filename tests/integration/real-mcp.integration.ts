@@ -104,7 +104,7 @@ const modelSearchInput: AgentSearchArguments = {
   radius: searchInput.radius,
   filters: searchInput.filters,
   sort: searchInput.sort,
-  page: { limit: searchInput.page.limit },
+  page: { limit: searchInput.page.limit, continuation: false },
 };
 
 const modelReportedSearchInput: AgentModelSearchArguments = {
@@ -121,7 +121,7 @@ const modelReportedSearchInput: AgentModelSearchArguments = {
     matchMode: "any",
   },
   sort: searchInput.sort,
-  page: { limit: searchInput.page.limit, continuation: null },
+  page: { limit: searchInput.page.limit, continuation: false },
   asOf: null,
 };
 

@@ -69,7 +69,7 @@ function reportedSearchArguments(input: AgentSearchArguments): AgentModelSearchA
     sort: input.sort,
     page: {
       limit: input.page.limit,
-      continuation: input.page.continuation ?? null,
+      continuation: false,
     },
     asOf: input.asOf ?? null,
   };
@@ -192,7 +192,7 @@ describe("server APIs", () => {
       radius: input.radius,
       filters: input.filters,
       sort: input.sort,
-      page: { limit: input.page.limit },
+      page: { limit: input.page.limit, continuation: false },
       ...(input.asOf === undefined ? {} : { asOf: input.asOf }),
     };
     const property = searchResponse.result.data.opportunities[0]!.property;
@@ -285,7 +285,7 @@ describe("server APIs", () => {
           roofAge: { operator: "gte", years: 15, basis: "direct_or_proxy" },
         },
         sort: "distance_asc",
-        page: { limit: 3 },
+        page: { limit: 3, continuation: false },
       };
       const property = searchResponse.result.data.opportunities[0]!.property;
       const usage = {
@@ -355,7 +355,10 @@ describe("server APIs", () => {
         {
           county: "pasco",
           center: queryInput.searchContext.center,
-          ...modelInput,
+          radius: modelInput.radius,
+          filters: modelInput.filters,
+          sort: modelInput.sort,
+          page: { limit: modelInput.page.limit },
         },
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
