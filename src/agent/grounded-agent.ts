@@ -786,7 +786,6 @@ export async function runGroundedAgent({
           meta: { ...initialResult.meta, nextCursor: null },
         };
         return modelToolResult(result, (data) => ({
-          resolvedCenter: modelFact(data.resolvedCenter, () => "value_redacted"),
           opportunities: data.opportunities.map((opportunity) => ({
             property: modelProperty(opportunity.property),
             distanceMeters: modelFact(opportunity.distanceMeters),

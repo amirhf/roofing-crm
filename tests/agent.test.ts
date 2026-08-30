@@ -470,6 +470,7 @@ describe("grounded natural-language agent", () => {
     expect(modelTraffic).not.toContain("EXAMPLE RECORD HOLDER ONE");
     expect(modelTraffic).not.toContain("900 EXAMPLE RECORD AVENUE");
     expect(modelTraffic).not.toContain("100 TEST WAY");
+    expect(modelTraffic).not.toContain('"resolvedCenter"');
     const property = propertyResponseFixture.result.data;
     const sensitiveValues = [
       ...(property.folio.availability === "available" ? [property.folio.value] : []),
