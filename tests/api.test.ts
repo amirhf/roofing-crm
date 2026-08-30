@@ -18,7 +18,10 @@ import { AgentMcpError } from "../src/agent/errors";
 import { GET as getLead, PATCH as patchLead } from "../src/app/api/leads/[leadId]/route";
 import { GET as listLeads, POST as postLead } from "../src/app/api/leads/route";
 import { POST as search } from "../src/app/api/search/route";
-import { POST as query } from "../src/app/api/query/route";
+import {
+  maxDuration as queryMaxDuration,
+  POST as query,
+} from "../src/app/api/query/route";
 import { resetLeadRepositoryForTests } from "../src/crm/repository-factory";
 import { AgentConfigurationError } from "../src/config/agent";
 import { loadApplicationRuntimeConfig } from "../src/config/runtime";
@@ -271,6 +274,47 @@ describe("server APIs", () => {
     expect(attribution).not.toContain(queryInput.query);
     expect(attribution).not.toContain("Pasco County, Florida");
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("uses the validated Oracle timeout inside a larger bounded Query budget", async () => {
+    const config = loadApplicationRuntimeConfig({
+      NODE_ENV: "test",
+      ORACLE_DATA_SOURCE: "fixtures",
+      ORACLE_MCP_TIMEOUT_MS: "45000",
+      LEAD_REPOSITORY: "memory",
+      SESSION_SECRET: "0123456789abcdef0123456789abcdef",
+      AI_PROVIDER: "gateway",
+      AI_MODEL: "openai/gpt-5-mini",
+    });
+    const runAgent = vi.fn(async () => {
+      throw new AgentMcpError("dependency_unavailable", "sanitized test failure");
+    });
+    const handler = createQueryPostHandler({
+      loadConfig: () => config,
+      createModel: () => ({
+        provider: "mock",
+        modelId: "test/mock",
+        model: new MockLanguageModelV4(),
+      }),
+      createOracle: () => new DevelopmentFixtureOracleClient("test"),
+      runAgent,
+    });
+
+    const response = await handler(request("/api/query", "POST", queryInput));
+
+    expect(response.status).toBe(503);
+    expect(runAgent).toHaveBeenCalledOnce();
+    expect(runAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bounds: expect.objectContaining({
+          toolDeadlineMs: 45_000,
+          stepDeadlineMs: 55_000,
+          requestDeadlineMs: 60_000,
+        }),
+      }),
+    );
+    expect(queryMaxDuration).toBe(90);
+    expect(queryMaxDuration * 1_000).toBeGreaterThan(75_000);
   });
 
   it.each([

@@ -1065,6 +1065,43 @@ describe("grounded natural-language agent", () => {
     }
   });
 
+  it("accepts an 18-second Oracle search inside the production default bounds", async () => {
+    vi.useFakeTimers();
+    try {
+      const base = fixtureOracle();
+      const search = vi.fn<OracleClient["searchRoofingOpportunities"]>(async (input) => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 18_000));
+        return base.searchRoofingOpportunities(input);
+      });
+      const model = modelWith(
+        callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+        finish(groundedOutput()),
+      );
+
+      const pending = runGroundedAgent({
+        model,
+        oracleClient: withSearchOverride(search),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(18_000);
+
+      await expect(pending).resolves.toMatchObject({
+        status: "grounded",
+        propertyIds: [propertyId],
+      });
+      expect(AGENT_BOUNDS.toolDeadlineMs).toBe(45_000);
+      expect(AGENT_BOUNDS.stepDeadlineMs).toBeGreaterThan(AGENT_BOUNDS.toolDeadlineMs);
+      expect(AGENT_BOUNDS.requestDeadlineMs).toBeGreaterThan(AGENT_BOUNDS.stepDeadlineMs);
+      expect(search).toHaveBeenCalledOnce();
+      expect(model.doGenerateCalls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("refuses prompt injection requesting SQL and direct storage access", async () => {
     const oracle = fixtureOracle();
     const search = vi.spyOn(oracle, "searchRoofingOpportunities");

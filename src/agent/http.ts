@@ -5,7 +5,10 @@ import type { AgentModelAdapter } from "./provider";
 import { z } from "zod";
 
 import { createAgentModelAdapter } from "@/agent/provider";
-import { naturalLanguageQueryRequestSchema } from "@/agent/schemas";
+import {
+  agentBoundsForOracleTimeout,
+  naturalLanguageQueryRequestSchema,
+} from "@/agent/schemas";
 import type { NaturalLanguageQueryResult } from "@/agent/types";
 import {
   ApplicationConfigurationError,
@@ -225,7 +228,7 @@ function classifiedError(error: unknown): {
       return {
         body: errorResult(
           "timeout",
-          "The grounded query exceeded its 12-second server deadline.",
+          "The grounded query exceeded its bounded server deadline.",
         ),
         status: 504,
       };
@@ -297,7 +300,7 @@ function classifiedError(error: unknown): {
     return {
       body: errorResult(
         "timeout",
-        "The grounded query exceeded its 12-second server deadline.",
+        "The grounded query exceeded its bounded server deadline.",
       ),
       status: 504,
     };
@@ -376,6 +379,7 @@ export function createQueryPostHandler(
         sessionIdHash: session.sessionIdHash,
         request: input,
         abortSignal: request.signal,
+        bounds: agentBoundsForOracleTimeout(config.oracle.oracleMcpTimeoutMs),
       });
       const result: NaturalLanguageQueryResult = {
         status: "complete",

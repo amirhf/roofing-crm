@@ -7,9 +7,9 @@ export const AGENT_BOUNDS = Object.freeze({
   maxSearchPages: 2,
   maxPageSize: 25,
   maxCursorCharacters: 512,
-  requestDeadlineMs: 12_000,
-  stepDeadlineMs: 4_000,
-  toolDeadlineMs: 3_000,
+  requestDeadlineMs: 60_000,
+  stepDeadlineMs: 55_000,
+  toolDeadlineMs: 45_000,
   maxMcpResponseBytes: 131_072,
   maxTotalMcpResponseBytes: 262_144,
   maxAnswerCharacters: 600,
@@ -21,6 +21,27 @@ export const AGENT_BOUNDS = Object.freeze({
 export type AgentBounds = Readonly<{
   [Key in keyof typeof AGENT_BOUNDS]: number;
 }>;
+
+const AGENT_STEP_OVERHEAD_MS = 10_000;
+const AGENT_REQUEST_OVERHEAD_MS = 15_000;
+const MIN_AGENT_ORACLE_TIMEOUT_MS = 5_000;
+const MAX_AGENT_ORACLE_TIMEOUT_MS = 60_000;
+
+export function agentBoundsForOracleTimeout(oracleMcpTimeoutMs: number): AgentBounds {
+  if (
+    !Number.isSafeInteger(oracleMcpTimeoutMs) ||
+    oracleMcpTimeoutMs < MIN_AGENT_ORACLE_TIMEOUT_MS ||
+    oracleMcpTimeoutMs > MAX_AGENT_ORACLE_TIMEOUT_MS
+  ) {
+    throw new RangeError("The Oracle MCP timeout is outside the bounded range.");
+  }
+  return Object.freeze({
+    ...AGENT_BOUNDS,
+    toolDeadlineMs: oracleMcpTimeoutMs,
+    stepDeadlineMs: oracleMcpTimeoutMs + AGENT_STEP_OVERHEAD_MS,
+    requestDeadlineMs: oracleMcpTimeoutMs + AGENT_REQUEST_OVERHEAD_MS,
+  });
+}
 
 const coordinatesSchema = z
   .object({
