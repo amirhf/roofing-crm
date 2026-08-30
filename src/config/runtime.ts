@@ -58,7 +58,10 @@ function parseDatabaseUrl(value: string | undefined, required: boolean): string 
   return value;
 }
 
-function parseSessionSecret(value: string | undefined): string {
+export function loadSessionSecret(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const value = environment.SESSION_SECRET;
   if (!value) {
     throw new ApplicationConfigurationError("SESSION_SECRET is required.");
   }
@@ -89,6 +92,6 @@ export function loadApplicationRuntimeConfig(
       environment.DATABASE_URL,
       oracle.nodeEnvironment === "production" || leadRepository === "postgres",
     ),
-    sessionSecret: parseSessionSecret(environment.SESSION_SECRET),
+    sessionSecret: loadSessionSecret(environment),
   };
 }

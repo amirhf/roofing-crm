@@ -6,7 +6,12 @@ export interface OracleRuntimeConfig {
   readonly nodeEnvironment: NodeEnvironment;
   readonly dataSource: OracleDataSource;
   readonly oracleMcpUrl: URL | null;
+  readonly oracleMcpTimeoutMs: number;
 }
+
+export const DEFAULT_ORACLE_MCP_TIMEOUT_MS = 45_000;
+export const MIN_ORACLE_MCP_TIMEOUT_MS = 5_000;
+export const MAX_ORACLE_MCP_TIMEOUT_MS = 60_000;
 
 export class OracleConfigurationError extends Error {
   constructor(message: string) {
@@ -67,6 +72,26 @@ function parseMcpUrl(value: string | undefined, required: boolean): URL | null {
   return url;
 }
 
+function parseMcpTimeout(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_ORACLE_MCP_TIMEOUT_MS;
+  if (!/^\d+$/.test(value)) {
+    throw new OracleConfigurationError(
+      `ORACLE_MCP_TIMEOUT_MS must be an integer from ${MIN_ORACLE_MCP_TIMEOUT_MS} through ${MAX_ORACLE_MCP_TIMEOUT_MS}.`,
+    );
+  }
+  const timeoutMs = Number(value);
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < MIN_ORACLE_MCP_TIMEOUT_MS ||
+    timeoutMs > MAX_ORACLE_MCP_TIMEOUT_MS
+  ) {
+    throw new OracleConfigurationError(
+      `ORACLE_MCP_TIMEOUT_MS must be an integer from ${MIN_ORACLE_MCP_TIMEOUT_MS} through ${MAX_ORACLE_MCP_TIMEOUT_MS}.`,
+    );
+  }
+  return timeoutMs;
+}
+
 export function loadOracleRuntimeConfig(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): OracleRuntimeConfig {
@@ -84,5 +109,6 @@ export function loadOracleRuntimeConfig(
       environment.ORACLE_MCP_URL,
       nodeEnvironment === "production" || dataSource === "mcp",
     ),
+    oracleMcpTimeoutMs: parseMcpTimeout(environment.ORACLE_MCP_TIMEOUT_MS),
   };
 }

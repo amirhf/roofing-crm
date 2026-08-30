@@ -19,6 +19,7 @@ const PASCO_CENTER: MapPoint = { latitude: 28.3232, longitude: -82.4319 };
 
 type View = "explore" | "leads" | "query";
 type SearchState = "idle" | "loading" | "success" | "empty" | "invalid" | "error";
+type PermitCoverage = "available" | "unavailable" | "unknown";
 
 function RoofMark() {
   return (
@@ -109,8 +110,9 @@ export function RoofingCrm() {
   const [longitude, setLongitude] = useState(String(PASCO_CENTER.longitude));
   const [radius, setRadius] = useState(5);
   const [roofAge, setRoofAge] = useState(15);
-  const [openPermits, setOpenPermits] = useState(true);
+  const [openPermits, setOpenPermits] = useState(false);
   const [minOpenDays, setMinOpenDays] = useState(30);
+  const [permitCoverage, setPermitCoverage] = useState<PermitCoverage>("unknown");
   const [locationMessage, setLocationMessage] = useState(
     "Click the map or enter coordinates to place the search pin.",
   );
@@ -219,12 +221,19 @@ export function RoofingCrm() {
         roofAge: { operator: "gte", years: roofAge, basis: "direct_or_proxy" },
         ...(openPermits
           ? {
-              permit: { roofingOnly: true, openOnly: true, minOpenDays },
+              permit: {
+                roofingOnly: true,
+                openOnly: true,
+                ...(permitCoverage === "available" ? { minOpenDays } : {}),
+              },
             }
           : {}),
         matchMode: "all",
       },
-      sort: openPermits ? "permit_open_days_desc" : "distance_asc",
+      sort:
+        openPermits && permitCoverage === "available"
+          ? "permit_open_days_desc"
+          : "distance_asc",
       page: { limit: 10 },
     };
   }
@@ -292,6 +301,16 @@ export function RoofingCrm() {
         ({ property }) => !seen.has(property.propertyId),
       );
       const combined = [...existing, ...additions];
+      if (combined.length > 0) {
+        setPermitCoverage(
+          combined.some(
+            ({ property }) =>
+              property.openRoofingPermitCount.availability === "available",
+          )
+            ? "available"
+            : "unavailable",
+        );
+      }
       setResult({
         ...oracleResult,
         data: { ...oracleResult.data, opportunities: combined },
@@ -301,7 +320,11 @@ export function RoofingCrm() {
       }
       if (combined.length === 0) {
         setSearchState("empty");
-        setSearchMessage("No opportunities matched these Oracle-resolved filters.");
+        setSearchMessage(
+          input.filters.permit
+            ? "Oracle returned no results for the explicit permit filter. Permit coverage may be unavailable; unavailable was not treated as zero."
+            : "No opportunities matched these Oracle-resolved filters.",
+        );
       } else {
         setSearchState("success");
         setSearchMessage(
@@ -511,6 +534,7 @@ export function RoofingCrm() {
                     <input
                       type="checkbox"
                       checked={openPermits}
+                      disabled={permitCoverage === "unavailable"}
                       onChange={(event) => {
                         invalidateSearchResults();
                         setOpenPermits(event.target.checked);
@@ -527,7 +551,7 @@ export function RoofingCrm() {
                         max={36500}
                         step={1}
                         value={minOpenDays}
-                        disabled={!openPermits}
+                        disabled={!openPermits || permitCoverage !== "available"}
                         onChange={(event) => {
                           invalidateSearchResults();
                           setMinOpenDays(Number(event.target.value));
@@ -536,6 +560,13 @@ export function RoofingCrm() {
                       days
                     </span>
                   </label>
+                  <p className="boundary-copy" aria-live="polite">
+                    {permitCoverage === "unavailable"
+                      ? "Permit coverage is unavailable for the returned Oracle dataset. Permit-specific filters remain disabled."
+                      : permitCoverage === "unknown"
+                        ? "Permit coverage is not yet confirmed. Run the default search before applying permit-specific duration filters."
+                        : "Permit coverage is available for the returned Oracle records."}
+                  </p>
                 </fieldset>
                 <button
                   className="primary-button search-button"
@@ -630,7 +661,11 @@ export function RoofingCrm() {
                   {searchState === "empty" ? (
                     <div className="result-empty">
                       <strong>No matches</strong>
-                      <p>Try widening the Oracle search inputs.</p>
+                      <p>
+                        {openPermits
+                          ? "Permit coverage may be unavailable. Clear the explicit permit filter before interpreting an empty result set."
+                          : "Try widening the Oracle search inputs."}
+                      </p>
                     </div>
                   ) : null}
                   {searchState === "invalid" ? (

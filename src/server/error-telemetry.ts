@@ -5,6 +5,8 @@ export interface ServerErrorEvent {
   readonly operation: string;
   readonly errorClass: string;
   readonly latencyMs: number;
+  readonly attemptCount?: number;
+  readonly statusCategory?: string;
 }
 
 export function createRequestId(): string {

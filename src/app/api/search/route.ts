@@ -1,30 +1,28 @@
-import { loadApplicationRuntimeConfig } from "@/config/runtime";
+import { loadOracleRuntimeConfig } from "@/config/oracle";
 import {
   assertValidSearchArguments,
   ContractValidationError,
   OracleSchemaHashMismatchError,
 } from "@/oracle/contracts";
 import { createOracleClient } from "@/oracle/factory";
-import {
-  createRequestId,
-  recordServerError,
-  sanitizedErrorClass,
-} from "@/server/error-telemetry";
+import { createRequestId, recordServerError } from "@/server/error-telemetry";
+import { classifyOracleSearchError } from "@/server/oracle-search-telemetry";
 import { jsonResponse } from "@/server/request-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-const SEARCH_ORACLE_TIMEOUT_MS = 10_000;
+export const maxDuration = 65;
 
 export async function POST(request: Request): Promise<Response> {
   const startedAt = performance.now();
   try {
     const input: unknown = await request.json();
     assertValidSearchArguments(input);
-    const client = createOracleClient(loadApplicationRuntimeConfig(process.env).oracle);
+    const oracleConfig = loadOracleRuntimeConfig(process.env);
+    const client = createOracleClient(oracleConfig);
     const result = await client.searchRoofingOpportunities(input, {
       signal: request.signal,
-      timeoutMs: SEARCH_ORACLE_TIMEOUT_MS,
+      timeoutMs: oracleConfig.oracleMcpTimeoutMs,
     });
     if (!result.ok) {
       const status = result.error.code === "invalid_argument" ? 400 : 503;
@@ -34,6 +32,8 @@ export async function POST(request: Request): Promise<Response> {
         operation: "oracle_property_search",
         errorClass: "OracleFailure",
         latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        attemptCount: 1,
+        statusCategory: `oracle_${result.error.code}`,
       });
       return jsonResponse(
         {
@@ -52,11 +52,14 @@ export async function POST(request: Request): Promise<Response> {
     return jsonResponse(result);
   } catch (error) {
     const requestId = createRequestId();
+    const classification = classifyOracleSearchError(error);
     recordServerError({
       requestId,
       operation: "oracle_property_search",
-      errorClass: sanitizedErrorClass(error),
+      errorClass: classification.errorClass,
       latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      attemptCount: 1,
+      statusCategory: classification.statusCategory,
     });
     if (error instanceof ContractValidationError) {
       return jsonResponse(

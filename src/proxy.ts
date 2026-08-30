@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
-import { loadApplicationRuntimeConfig } from "@/config/runtime";
+import { loadSessionSecret } from "@/config/runtime";
 import { resolveAnonymousSession } from "@/server/session";
 
 export function establishPageSession(
@@ -17,8 +17,10 @@ export function establishPageSession(
 }
 
 export function proxy(request: NextRequest): NextResponse {
-  const runtime = loadApplicationRuntimeConfig(process.env);
-  return establishPageSession(request.headers.get("cookie"), runtime.sessionSecret);
+  return establishPageSession(
+    request.headers.get("cookie"),
+    loadSessionSecret(process.env),
+  );
 }
 
 export const config = {

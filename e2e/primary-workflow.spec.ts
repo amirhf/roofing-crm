@@ -45,11 +45,23 @@ test("choose center, filter, inspect provenance, create and update a lead", asyn
   await map.click({ position: { x: 310, y: 190 } });
   await expect(page.getByText("Map pin selected as the search center.")).toBeVisible();
 
+  const permitFilter = page.getByRole("checkbox", {
+    name: "Require an open roofing permit",
+  });
+  const permitDuration = page.getByRole("spinbutton", {
+    name: "Minimum permit-open duration days",
+  });
+  await expect(permitFilter).not.toBeChecked();
+  await expect(permitDuration).toBeDisabled();
+  await page.getByRole("button", { name: "Search opportunities" }).click();
+  await expect(
+    page.getByText("Permit coverage is available for the returned Oracle records."),
+  ).toBeVisible();
+
   await page.getByRole("spinbutton", { name: "Radius miles" }).fill("8");
   await page.getByRole("spinbutton", { name: "Minimum roof age years" }).fill("18");
-  await page
-    .getByRole("spinbutton", { name: "Minimum permit-open duration days" })
-    .fill("45");
+  await permitFilter.check();
+  await permitDuration.fill("45");
   await page.getByRole("button", { name: "Search opportunities" }).click();
 
   await expect(page.getByText("1 opportunity returned.")).toBeVisible();

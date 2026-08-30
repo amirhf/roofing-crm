@@ -10,11 +10,13 @@ import {
 } from "../src/oracle/contracts";
 import {
   createBoundedOracleFetch,
+  MAX_ORACLE_MCP_HTTP_RESPONSE_BYTES,
   OracleMcpTransportError,
   OracleMcpResponseSizeError,
   settleBoundedOracleClose,
   StreamableHttpOracleMcpTransport,
 } from "../src/oracle/mcp-transport";
+import { classifyOracleSearchError } from "../src/server/oracle-search-telemetry";
 import type { OracleMcpTransport, SearchArguments } from "../src/oracle/types";
 
 class StubTransport implements OracleMcpTransport {
@@ -39,6 +41,25 @@ describe("typed Oracle client boundary", () => {
       ok: true,
       meta: { schemaHash: expect.any(String) },
     });
+  });
+
+  it("keeps a valid ten-result MCP search response within the streaming byte bound", async () => {
+    const response = structuredClone(searchResponseFixture.result);
+    const template = response.data.opportunities[0]!;
+    response.data.opportunities = Array.from({ length: 10 }, (_, index) => {
+      const opportunity = structuredClone(template);
+      opportunity.property.propertyId = `prop_${index.toString(16).padStart(32, "0")}`;
+      return opportunity;
+    });
+    const measuredBytes = new TextEncoder().encode(JSON.stringify(response)).byteLength;
+    expect(measuredBytes).toBeLessThan(MAX_ORACLE_MCP_HTTP_RESPONSE_BYTES);
+    const client = new ContractValidatingOracleClient(
+      new StubTransport(response),
+      "test",
+    );
+    const result = await client.searchRoofingOpportunities(searchArguments);
+    expect(result).toMatchObject({ ok: true });
+    expect(result.ok && result.data.opportunities).toHaveLength(10);
   });
 
   it("rejects a structurally invalid response before it crosses the boundary", async () => {
@@ -176,5 +197,41 @@ describe("typed Oracle client boundary", () => {
       20,
     );
     expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  it("classifies Oracle failures without exposing upstream details", () => {
+    const upstream = Object.assign(new Error("sentinel-owner-contact-address"), {
+      code: 503,
+    });
+    const classification = classifyOracleSearchError(
+      new OracleMcpTransportError("sentinel-query-coordinates", {
+        cause: upstream,
+      }),
+    );
+    expect(classification).toEqual({
+      errorClass: "OracleMcpTransportError",
+      statusCategory: "http_503",
+    });
+    expect(JSON.stringify(classification)).not.toContain("sentinel");
+
+    expect(
+      classifyOracleSearchError(new OracleMcpResponseSizeError("sentinel-response")),
+    ).toMatchObject({ statusCategory: "response_size" });
+    expect(
+      classifyOracleSearchError(
+        new OracleMcpTransportError("sentinel-timeout", {
+          cause: new DOMException("sentinel-timeout", "TimeoutError"),
+        }),
+      ),
+    ).toMatchObject({ statusCategory: "oracle_timeout" });
+    expect(
+      classifyOracleSearchError(new OracleSchemaHashMismatchError("sentinel-hash")),
+    ).toMatchObject({ statusCategory: "schema_hash_mismatch" });
+    expect(
+      classifyOracleSearchError(new ContractValidationError("sentinel-contract")),
+    ).toMatchObject({ statusCategory: "contract_validation" });
+    expect(
+      classifyOracleSearchError(new OracleMcpTransportError("sentinel-transport")),
+    ).toMatchObject({ statusCategory: "mcp_transport" });
   });
 });

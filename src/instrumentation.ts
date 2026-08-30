@@ -1,7 +1,3 @@
-import { loadApplicationRuntimeConfig } from "@/config/runtime";
-
 export function register(): void {
-  if (process.env.NODE_ENV === "production") {
-    loadApplicationRuntimeConfig(process.env);
-  }
+  // Route-local loaders enforce only the infrastructure each boundary uses.
 }

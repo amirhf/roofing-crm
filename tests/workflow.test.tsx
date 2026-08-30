@@ -102,9 +102,9 @@ describe("primary workflow components", () => {
     });
     await user.clear(roofAge);
     await user.type(roofAge, "20");
-    await user.click(
+    expect(
       screen.getByRole("checkbox", { name: "Require an open roofing permit" }),
-    );
+    ).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "Search opportunities" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -138,6 +138,84 @@ describe("primary workflow components", () => {
     expect(screen.getByRole("button", { name: /200 SECOND TEST WAY/ })).toHaveClass(
       "selected",
     );
+  });
+
+  it("enables permit duration only after Oracle records prove permit coverage", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify(twoOpportunityResult()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    render(<RoofingCrm />);
+
+    const permitFilter = screen.getByRole("checkbox", {
+      name: "Require an open roofing permit",
+    });
+    const duration = screen.getByRole("spinbutton", {
+      name: "Minimum permit-open duration days",
+    });
+    expect(permitFilter).not.toBeChecked();
+    expect(duration).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Search opportunities" }));
+    await screen.findByText(
+      "Permit coverage is available for the returned Oracle records.",
+    );
+    await user.click(permitFilter);
+    expect(duration).toBeEnabled();
+    await user.clear(duration);
+    await user.type(duration, "45");
+    await user.click(screen.getByRole("button", { name: "Search opportunities" }));
+
+    const body = JSON.parse(
+      String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body),
+    ) as SearchArguments;
+    expect(body.filters.permit).toEqual({
+      roofingOnly: true,
+      openOnly: true,
+      minOpenDays: 45,
+    });
+    expect(body.sort).toBe("permit_open_days_desc");
+  });
+
+  it("disables permit filters and renders unavailable coverage without zero claims", async () => {
+    const user = userEvent.setup();
+    const response = twoOpportunityResult() as Extract<
+      OracleResult<SearchResultData>,
+      { ok: true }
+    >;
+    for (const { property } of response.data.opportunities) {
+      Object.assign(property, {
+        openRoofingPermitCount: {
+          availability: "unavailable",
+          value: null,
+          class: "derived",
+          reason: "source_unavailable",
+          evidenceRefs: [],
+        },
+      });
+    }
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    render(<RoofingCrm />);
+
+    await user.click(screen.getByRole("button", { name: "Search opportunities" }));
+    expect(
+      await screen.findByText(
+        "Permit coverage is unavailable for the returned Oracle dataset. Permit-specific filters remain disabled.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "Require an open roofing permit" }),
+    ).toBeDisabled();
+    expect(screen.getByText(/Permit coverage is unavailable:/i)).toBeInTheDocument();
+    expect(screen.queryByText(/zero permit/i)).not.toBeInTheDocument();
   });
 
   it("appends cursor pages and invalidates results when search inputs change", async () => {

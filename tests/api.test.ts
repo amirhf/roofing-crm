@@ -124,6 +124,20 @@ describe("server APIs", () => {
     });
   });
 
+  it("loads only Oracle configuration for deterministic property search", async () => {
+    vi.stubEnv("LEAD_REPOSITORY", "not-a-repository");
+    vi.stubEnv("SESSION_SECRET", "short");
+    vi.stubEnv("DATABASE_URL", "not-a-database-url");
+    vi.stubEnv("AI_PROVIDER", "not-a-provider");
+    vi.stubEnv("AI_MODEL", "not-a-model");
+
+    const response = await search(
+      request("/api/search", "POST", searchRequest.arguments),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true });
+  });
+
   it("returns an honest model-not-configured state without a live call", async () => {
     const response = await query(request("/api/query", "POST", queryInput));
     expect(response.status).toBe(503);
