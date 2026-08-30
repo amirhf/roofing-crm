@@ -273,6 +273,41 @@ describe("server APIs", () => {
     );
   });
 
+  it("reports unsupported benign intent separately from sensitive-data rejection", async () => {
+    const model = new MockLanguageModelV4();
+    const oracle = new DevelopmentFixtureOracleClient("test");
+    const searchOracle = vi.spyOn(oracle, "searchRoofingOpportunities");
+    const recordError = vi.fn();
+    const handler = createQueryPostHandler({
+      loadConfig: configuredTestRuntime,
+      createModel: () => ({ provider: "mock", modelId: "test/mock", model }),
+      createOracle: () => oracle,
+      recordError,
+    });
+
+    const response = await handler(
+      request("/api/query", "POST", {
+        ...queryInput,
+        query: "Compare roofing prospects using an unfamiliar harmless criterion",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "error",
+      error: {
+        code: "invalid_request",
+        message:
+          "The query could not be converted into a supported bounded roofing search. Rephrase it using roof age, radius, permit duration, sorting, or result limits.",
+      },
+    });
+    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(searchOracle).not.toHaveBeenCalled();
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({ errorClass: "AgentIntentValidationError" }),
+    );
+  });
+
   it.each([
     {
       name: "HTTP 402 budget exhaustion",

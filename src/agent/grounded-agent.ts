@@ -31,6 +31,7 @@ import type {
 
 import {
   AgentGroundingError,
+  AgentIntentValidationError,
   AgentMcpError,
   AgentPrivacyError,
   AgentResponseSizeError,
@@ -786,6 +787,7 @@ export async function runGroundedAgent({
 
 export {
   AgentGroundingError,
+  AgentIntentValidationError,
   AgentMcpError,
   AgentPrivacyError,
   AgentResponseSizeError,

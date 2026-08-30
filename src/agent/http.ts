@@ -38,6 +38,7 @@ import {
 import {
   AgentBusyError,
   AgentGroundingError,
+  AgentIntentValidationError,
   AgentMcpError,
   AgentPrivacyError,
   AgentResponseSizeError,
@@ -169,6 +170,15 @@ function classifiedError(error: unknown): {
       body: errorResult(
         "invalid_request",
         "The query contains details that cannot be safely sent to the model. Use the map controls for the search center and remove owner, contact, address, parcel, coordinate, or contractor values.",
+      ),
+      status: 400,
+    };
+  }
+  if (error instanceof AgentIntentValidationError) {
+    return {
+      body: errorResult(
+        "invalid_request",
+        "The query could not be converted into a supported bounded roofing search. Rephrase it using roof age, radius, permit duration, sorting, or result limits.",
       ),
       status: 400,
     };

@@ -1,4 +1,4 @@
-import type { LanguageModelV4GenerateResult } from "@ai-sdk/provider";
+import { APICallError, type LanguageModelV4GenerateResult } from "@ai-sdk/provider";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 
@@ -7,6 +7,7 @@ import permitResponseFixture from "../contracts/fixtures/permit-response.json";
 import propertyResponseFixture from "../contracts/fixtures/property-response.json";
 import {
   AgentGroundingError,
+  AgentIntentValidationError,
   AgentMcpError,
   AgentPrivacyError,
   AgentToolLimitError,
@@ -132,6 +133,47 @@ function withSearchOverride(
 }
 
 describe("grounded natural-language agent", () => {
+  it.each([
+    "Find the nearest published Pasco properties with a roof-age proxy of at least 15 years. Summarize why they may be roofing opportunities, clearly distinguish proxy data from actual roof age, and state that permit coverage is unavailable.",
+    "Find roofing opportunities with a roof age of at least 15 years.",
+    "Find properties within 8 miles of the selected center with roofs at least 18 years old and an open roofing permit for 45+ days.",
+  ])("accepts canonical production-safe caller intent: %s", async (query) => {
+    const base = fixtureOracle();
+    const search = vi.fn((input: SearchArguments) =>
+      base.searchRoofingOpportunities(input),
+    );
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+      finish(groundedOutput()),
+    );
+    const privateCenter = {
+      kind: "coordinates" as const,
+      latitude: 28.1234567,
+      longitude: -82.7654321,
+    };
+
+    await runGroundedAgent({
+      model,
+      oracleClient: withSearchOverride(search),
+      nodeEnvironment: "test",
+      sessionIdHash,
+      request: {
+        ...queryRequest,
+        query,
+        searchContext: { ...queryRequest.searchContext, center: privateCenter },
+      },
+    });
+
+    expect(search).toHaveBeenCalledOnce();
+    expect(search.mock.calls[0]?.[0].center).toEqual(privateCenter);
+    model.doGenerateCalls.forEach((invocation) => {
+      const traffic = JSON.stringify(invocation);
+      expect(traffic).not.toContain(query);
+      expect(traffic).not.toContain(String(privateCenter.latitude));
+      expect(traffic).not.toContain(String(privateCenter.longitude));
+    });
+  });
+
   it("translates a normal radius, roof-age, and open-permit request into exact MCP inputs", async () => {
     const base = fixtureOracle();
     const search = vi.fn((input: SearchArguments) =>
@@ -217,7 +259,7 @@ describe("grounded natural-language agent", () => {
     expect(modelTraffic).toContain('"count":2');
   });
 
-  it("keeps caller and server-held sensitive values out of every model invocation", async () => {
+  it("rejects caller-sensitive values before every model and Oracle invocation", async () => {
     const privateCenter = {
       kind: "coordinates" as const,
       latitude: 28.1234567,
@@ -233,44 +275,54 @@ describe("grounded natural-language agent", () => {
         filters: {},
       },
     };
-    const expectedSearch = { ...searchInput, center: privateCenter };
-    const base = fixtureOracle();
-    const search = vi.fn((input: SearchArguments) =>
-      base.searchRoofingOpportunities(input),
-    );
+    const search = vi.fn<OracleClient["searchRoofingOpportunities"]>();
     const model = modelWith(
       callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
       finish(groundedOutput()),
     );
 
-    await runGroundedAgent({
-      model,
-      oracleClient: withSearchOverride(search),
-      nodeEnvironment: "test",
-      sessionIdHash,
-      request: privateRequest,
-    });
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: withSearchOverride(search),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: privateRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentPrivacyError);
+    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(search).not.toHaveBeenCalled();
+  });
 
-    expect(search).toHaveBeenCalledWith(
-      expectedSearch,
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    const sentinels = [
-      String(privateCenter.latitude),
-      String(privateCenter.longitude),
-      "PRIVACY OWNER SENTINEL",
-      "+1 (727) 555-0198",
-      "private.owner@privacy.invalid",
-      "742 Exact Pin Avenue",
-      "PO Box 919",
-      "FOLIO-PRIVACY-SENTINEL",
-      "PARCEL-PRIVACY-SENTINEL",
-      "PRIVACY CONTRACTOR SENTINEL",
-    ];
-    model.doGenerateCalls.forEach((invocation) => {
-      const traffic = JSON.stringify(invocation);
-      sentinels.forEach((sentinel) => expect(traffic).not.toContain(sentinel));
-    });
+  it.each([
+    "Find roofs near latitude 28.1234567 and longitude -82.7654321",
+    "Find roofs near map pin 28.1234567, -82.7654321",
+    "Find roofs at street address 742 Exact Pin Avenue",
+    "Find roofs using mailing address PO Box 919",
+    "Find roofs for folio FOLIO-PRIVACY-SENTINEL",
+    "Find roofs for parcel identifier PARCEL-PRIVACY-SENTINEL",
+    "Find roofs for owner name PRIVACY OWNER SENTINEL",
+    "Find roofs with phone +1 (727) 555-0198",
+    "Find roofs with email private.owner@privacy.invalid",
+    "Find roofs for contractor name PRIVACY CONTRACTOR SENTINEL",
+    "Find roofs with permit number PERMIT-PRIVACY-SENTINEL",
+    "Find roofs using api key key_privacy_sentinel_12345",
+    "Find roofs after cursor cursor_private_server_state",
+  ])("rejects a sensitive sentinel before model or Oracle traffic: %s", async (query) => {
+    const search = vi.fn<OracleClient["searchRoofingOpportunities"]>();
+    const model = modelWith(finish(groundedOutput()));
+
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: withSearchOverride(search),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: { ...queryRequest, query },
+      }),
+    ).rejects.toBeInstanceOf(AgentPrivacyError);
+    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(search).not.toHaveBeenCalled();
   });
 
   it("keeps a server-held street-address center out of model traffic", async () => {
@@ -325,7 +377,7 @@ describe("grounded natural-language agent", () => {
           query: "Find roofs for Ambiguous Sentinel Holdings",
         },
       }),
-    ).rejects.toBeInstanceOf(AgentPrivacyError);
+    ).rejects.toBeInstanceOf(AgentIntentValidationError);
     expect(model.doGenerateCalls).toHaveLength(0);
     expect(search).not.toHaveBeenCalled();
   });
@@ -955,6 +1007,33 @@ describe("grounded natural-language agent", () => {
         error instanceof Error &&
         /abort|timeout|timed out/i.test(error.name + error.message),
     );
+    expect(model.doGenerateCalls).toHaveLength(1);
+  });
+
+  it("does not retry a transient provider failure", async () => {
+    const generate = vi.fn(async () => {
+      throw new APICallError({
+        message: "sanitized provider failure",
+        url: "https://ai-gateway.vercel.sh/v1/ai/language-model",
+        requestBodyValues: {},
+        statusCode: 503,
+        responseBody: "{}",
+        isRetryable: true,
+      });
+    });
+    const model = new MockLanguageModelV4({ doGenerate: generate });
+
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: fixtureOracle(),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(APICallError);
+    expect(generate).toHaveBeenCalledOnce();
+    expect(model.doGenerateCalls).toHaveLength(1);
   });
 
   it("settles a hung MCP call at the tool deadline and passes its abort signal", async () => {

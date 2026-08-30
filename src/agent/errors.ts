@@ -44,3 +44,10 @@ export class AgentPrivacyError extends Error {
     this.name = "AgentPrivacyError";
   }
 }
+
+export class AgentIntentValidationError extends Error {
+  constructor() {
+    super("The query could not be converted into a supported bounded roofing search.");
+    this.name = "AgentIntentValidationError";
+  }
+}
