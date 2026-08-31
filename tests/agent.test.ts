@@ -423,12 +423,13 @@ describe("grounded natural-language agent", () => {
       sort: "distance_asc",
       page: { limit: 3 },
     });
-    expect(JSON.stringify(model.doGenerateCalls)).not.toContain(exactQuery);
-    expect(JSON.stringify(model.doGenerateCalls)).not.toContain(
-      String(privateCenter.latitude),
-    );
-    expect(JSON.stringify(model.doGenerateCalls)).not.toContain(
-      String(privateCenter.longitude),
+    const modelTraffic = JSON.stringify(model.doGenerateCalls);
+    expect(modelTraffic).not.toContain(exactQuery);
+    expect(modelTraffic).not.toContain(String(privateCenter.latitude));
+    expect(modelTraffic).not.toContain(String(privateCenter.longitude));
+    expect(modelTraffic).toContain('"groundingState":"validated_results_available"');
+    expect(modelTraffic).toContain(
+      "Optional unavailable facts—including permit, contractor, BBB, ownership, or contact coverage—remain grounded unavailable facts",
     );
   });
 

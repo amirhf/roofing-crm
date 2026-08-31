@@ -957,6 +957,8 @@ The exact search center and pagination cursor are private server context. They a
 Do not invent a property, permit, value, missing-field reason, source, URL, or evidence reference. Report property and evidence references only when they occur in validated tool results.
 Oracle records use opaque request-scoped property, permit, and evidence references. Treat those references as the only identifiers available to you. Never infer, request, or emit canonical Oracle identifiers.
 Do not generate narrative answers or failure messages; the server constructs all displayed prose deterministically. If the request asks for SQL, direct storage, unsupported work, or cannot be grounded, return cannot_ground with an explicit failure code.
+For a supported roofing-opportunity request, a search result whose groundingState is validated_results_available must be returned as grounded using only property and evidence references from those validated opportunities. Optional unavailable facts—including permit, contractor, BBB, ownership, or contact coverage—remain grounded unavailable facts; they are not a reason to return missing_data or insufficient_grounding. A request to explain proxy basis or coverage is satisfied by the server-rendered validated facts, not by model prose.
+Return no_results only when the validated search tool reports groundingState no_results. Never treat unavailable coverage as an empty or negative result.
 The model-visible search tool uses a strict nullable plan: every key is required, and null means that an optional Oracle field is absent. Set an absent filter group to null; within a present group, set only absent leaves to null. Never encode absence with false, 0, any, or an epoch timestamp. The server removes nulls before calling Oracle.
 The filters field in the final result must exactly echo that center-free search plan. It includes radius, filters, sort, page limit, continuation, and asOf. Preserve values exactly. Use null for the entire filters field only when no search was executed.`;
 }
@@ -1034,7 +1036,7 @@ export async function runGroundedAgent({
   const tools = {
     prism_v1_search_roofing_opportunities: tool({
       description:
-        "Create the initial Pasco roofing-opportunity search plan around the private server-held center. Use null for every absent optional group or field; never substitute neutral values. Continuation is fixed to false; Oracle, not the model, calculates distance, roof age, permit duration, and eligibility.",
+        "Create the initial Pasco roofing-opportunity search plan around the private server-held center. Use null for every absent optional group or field; never substitute neutral values. Continuation is fixed to false; Oracle, not the model, calculates distance, roof age, permit duration, and eligibility. When groundingState is validated_results_available, select only returned property and evidence references and return grounded even when optional coverage is unavailable.",
       inputSchema: agentModelSearchArgumentsSchema,
       execute: async (input, { abortSignal }) => {
         const modelInput = input as AgentModelSearchArguments;
@@ -1089,6 +1091,10 @@ export async function runGroundedAgent({
           meta: { ...initialResult.meta, nextCursor: null },
         };
         return modelToolResult(result, (data) => ({
+          groundingState:
+            data.opportunities.length === 0
+              ? "no_results"
+              : "validated_results_available",
           opportunities: data.opportunities.map((opportunity) => ({
             property: modelProperty(opportunity.property, references),
             distanceMeters: modelFact(opportunity.distanceMeters, references),
