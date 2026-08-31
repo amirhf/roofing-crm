@@ -32,9 +32,13 @@ function run(command, args, options = {}) {
     ...options,
   });
   if (result.status !== 0) {
-    throw new Error(
-      `${command.split("/").at(-1)} failed: ${(result.stderr || result.stdout).trim()}`,
-    );
+    const detail = (
+      result.stderr ??
+      result.stdout ??
+      result.error?.message ??
+      `process exited with status ${String(result.status)}`
+    ).trim();
+    throw new Error(`${command.split("/").at(-1)} failed: ${detail}`);
   }
   return result.stdout.trim();
 }

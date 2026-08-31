@@ -66,7 +66,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes postgresql postgresql-client
-          echo "POSTGRES_BIN_DIR=$(pg_config --bindir)" >> "$GITHUB_ENV"
+          POSTGRES_BIN_DIR="$(find /usr/lib/postgresql -type f -name initdb -printf '%h\n' | sort -V | tail -n 1)"
+          test -x "$POSTGRES_BIN_DIR/initdb"
+          test -x "$POSTGRES_BIN_DIR/pg_ctl"
+          test -x "$POSTGRES_BIN_DIR/psql"
+          echo "POSTGRES_BIN_DIR=$POSTGRES_BIN_DIR" >> "$GITHUB_ENV"
       - run: npm run test:integration:postgres-migration
 
   fixture-browser:
