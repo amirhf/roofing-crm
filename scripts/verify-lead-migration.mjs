@@ -156,7 +156,7 @@ async function main() {
       "-l",
       join(root, "postgres.log"),
       "-o",
-      `-h 127.0.0.1 -p ${port}`,
+      `-h 127.0.0.1 -k ${root} -p ${port}`,
       "-w",
       "start",
     ]);
