@@ -55,13 +55,14 @@ test("choose center, filter, inspect provenance, create and update a lead", asyn
   await expect(permitDuration).toBeDisabled();
   await page.getByRole("button", { name: "Search opportunities" }).click();
   await expect(
-    page.getByText("Permit coverage is available for the returned Oracle records."),
+    page.getByText(
+      "Permit coverage is unavailable for the returned Oracle dataset. Permit-specific filters remain disabled.",
+    ),
   ).toBeVisible();
+  await expect(permitFilter).toBeDisabled();
 
   await page.getByRole("spinbutton", { name: "Radius miles" }).fill("8");
   await page.getByRole("spinbutton", { name: "Minimum roof age years" }).fill("18");
-  await permitFilter.check();
-  await permitDuration.fill("45");
   await page.getByRole("button", { name: "Search opportunities" }).click();
 
   await expect(page.getByText("1 opportunity returned.")).toBeVisible();
@@ -70,7 +71,6 @@ test("choose center, filter, inspect provenance, create and update a lead", asyn
     radius: { value: 8, unit: "mi" },
     filters: {
       roofAge: { years: 18, basis: "direct_or_proxy" },
-      permit: { openOnly: true, minOpenDays: 45 },
       matchMode: "all",
     },
   });
@@ -228,6 +228,8 @@ test("keyboard controls and mobile layout remain usable", async ({ page }) => {
 test("grounded query renders only validated MCP property and evidence records", async ({
   page,
 }) => {
+  const propertyRef = `property_ref_${"p".repeat(24)}`;
+  const evidenceRef = `evidence_ref_${"e".repeat(24)}`;
   await page.route("**/api/query", (route) =>
     route.fulfill({
       status: 200,
@@ -239,29 +241,82 @@ test("grounded query renders only validated MCP property and evidence records", 
           answer:
             "Retrieved 1 validated Oracle property. Review the MCP-backed records and evidence below.",
           filters: {
-            county: "pasco",
-            center: { kind: "place", text: "Zephyrhills, Florida" },
             radius: { value: 8, unit: "mi" },
             filters: {
               roofAge: { operator: "gte", years: 18, basis: "direct_or_proxy" },
               permit: { roofingOnly: true, openOnly: true, minOpenDays: 45 },
+              ownership: null,
+              freshness: null,
+              matchMode: "all",
             },
             sort: "distance_asc",
-            page: { limit: 10 },
+            page: { limit: 10, continuation: false },
+            asOf: null,
           },
-          propertyIds: [agentProperty.propertyId],
-          evidenceRefs: [agentProperty.evidence[0]!.evidenceId],
+          propertyRefs: [propertyRef],
+          evidenceRefs: [evidenceRef],
           missingFields: [
             {
-              propertyId: agentProperty.propertyId,
-              permitId: null,
+              propertyRef,
+              permitRef: null,
               field: "bbbRating",
               reason: "no_permit_record_returned",
             },
           ],
           failure: null,
-          properties: [agentProperty],
-          evidence: [agentProperty.evidence[0]],
+          properties: [
+            {
+              propertyRef,
+              county: "pasco",
+              yearBuilt: agentProperty.yearBuilt,
+              roofInstallationDate: agentProperty.roofInstallationDate,
+              roofAgeSignal: agentProperty.roofAgeSignal,
+              ownershipDurationYears: agentProperty.ownershipDurationYears,
+              openRoofingPermitCount: agentProperty.openRoofingPermitCount,
+              maximumOpenRoofingPermitDays: agentProperty.maximumOpenRoofingPermitDays,
+              permits: [],
+              evidenceRefs: [evidenceRef],
+            },
+          ],
+          evidence: [
+            {
+              evidenceRef,
+              sourceName: agentProperty.evidence[0]!.sourceName,
+              observedAt: agentProperty.evidence[0]!.observedAt,
+              retrievedAt: agentProperty.evidence[0]!.retrievedAt,
+              loadedAt: agentProperty.evidence[0]!.loadedAt,
+            },
+          ],
+        },
+        metadata: {
+          requestId: "synthetic-browser-request",
+          requestedProvider: "mock",
+          requestedModel: "test/model",
+          sdkResponseModel: { value: "test/model", unavailableReason: null },
+          resolvedProvider: { value: null, unavailableReason: "not_observable" },
+          resolvedModel: { value: null, unavailableReason: "not_observable" },
+          modelGenerations: 2,
+          sdkAttemptCount: 2,
+          sdkRetryCount: 0,
+          providerAttemptCount: { value: null, unavailableReason: "not_observable" },
+          oracleToolCallCount: 1,
+          queryLatencyMs: 20,
+          modelLatencyMs: { value: 10, unavailableReason: null },
+          oracleLatencyMs: 5,
+          gatewayGenerationTimeMs: {
+            value: null,
+            unavailableReason: "bounded_lookup_unsupported",
+          },
+          inputTokens: { value: 20, unavailableReason: null },
+          outputTokens: { value: 10, unavailableReason: null },
+          totalTokens: { value: 30, unavailableReason: null },
+          costUsd: { value: null, unavailableReason: "bounded_lookup_unsupported" },
+          finishReason: { value: "stop", unavailableReason: null },
+          completion: "grounded",
+          attribution: {
+            kind: "hashed_anonymous_session",
+            tags: ["feature:grounded-property-query", "env:test"],
+          },
         },
       }),
     }),
@@ -274,15 +329,18 @@ test("grounded query renders only validated MCP property and evidence records", 
   await page.getByRole("button", { name: "Run grounded query" }).click();
 
   await expect(page.getByText("Grounding proven")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Grounded property 1" })).toBeVisible();
+  await expect(page.getByText("Contract fixture appraisal source")).toBeVisible();
   await expect(
-    page.getByRole("heading", {
-      name: "100 TEST WAY, FIXTURE ZEPHYRHILLS, FL 33540",
-    }),
+    page.getByText("Canonical source identifiers stay server-held."),
   ).toBeVisible();
-  await expect(page.getByText("ev_fixture_appraiser_001")).toBeVisible();
   await expect(page.getByText("bbbRating")).toBeVisible();
   await page.getByText("Exact MCP search input").click();
   await expect(page.locator("pre")).toContainText('"minOpenDays": 45');
+  const rendered = await page.locator("body").innerText();
+  expect(rendered).not.toContain(agentProperty.propertyId);
+  expect(rendered).not.toContain(agentProperty.evidence[0]!.evidenceId);
+  expect(rendered).not.toContain("100 TEST WAY");
 });
 
 test("query interface is keyboard-usable and honest when no model is configured", async ({

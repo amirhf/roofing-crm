@@ -92,8 +92,7 @@ const searchInput: SearchArguments = {
   radius: { value: 50, unit: "mi" },
   filters: {
     roofAge: { operator: "gte", years: 0, basis: "direct_or_proxy" },
-    permit: { roofingOnly: true, openOnly: false, minOpenDays: 0 },
-    matchMode: "any",
+    matchMode: "all",
   },
   sort: "distance_asc",
   page: { limit: 2 },
@@ -103,14 +102,10 @@ const modelSearchInput: AgentModelSearchArguments = {
   radius: searchInput.radius,
   filters: {
     roofAge: searchInput.filters.roofAge ?? null,
-    permit: {
-      roofingOnly: true,
-      openOnly: false,
-      minOpenDays: 0,
-    },
+    permit: null,
     ownership: null,
     freshness: null,
-    matchMode: "any",
+    matchMode: "all",
   },
   sort: searchInput.sort,
   page: { limit: searchInput.page.limit, continuation: false },
