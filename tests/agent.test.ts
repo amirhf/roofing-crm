@@ -10,10 +10,11 @@ import {
   AgentIntentValidationError,
   AgentMcpError,
   AgentPrivacyError,
+  AgentReferenceError,
   AgentToolLimitError,
   AGENT_ORACLE_TOOL_ALLOWLIST,
   ContractValidationError,
-  runGroundedAgent,
+  runGroundedAgent as runGroundedAgentImplementation,
 } from "../src/agent/grounded-agent";
 import {
   AGENT_BOUNDS,
@@ -87,8 +88,25 @@ const queryRequest: NaturalLanguageQueryRequest = {
 
 const propertyId = "prop_e72ba795455c19d71ce4cb11f6177a5e";
 const evidenceId = "ev_fixture_appraiser_001";
+const propertyRef = `property_ref_${"p".repeat(20)}0000` as const;
+const evidenceRef = `evidence_ref_${"e".repeat(20)}0001` as const;
+const permitRef = `permit_ref_${"p".repeat(20)}0003` as const;
 const sessionIdHash =
   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
+
+function deterministicReferenceToken(
+  kind: "property" | "permit" | "evidence",
+  ordinal: number,
+) {
+  return `${kind[0]!.repeat(20)}${String(ordinal).padStart(4, "0")}`;
+}
+
+function runGroundedAgent(options: Parameters<typeof runGroundedAgentImplementation>[0]) {
+  return runGroundedAgentImplementation({
+    ...options,
+    _internal: { referenceTokenSource: deterministicReferenceToken },
+  });
+}
 
 function generated(
   content: LanguageModelV4GenerateResult["content"],
@@ -121,8 +139,8 @@ function groundedOutput(overrides: Partial<AgentModelOutput> = {}): AgentModelOu
   return {
     status: "grounded",
     filters: modelReportedSearchInput,
-    propertyIds: [propertyId],
-    evidenceRefs: [evidenceId],
+    propertyRefs: [propertyRef],
+    evidenceRefs: [evidenceRef],
     missingFields: [],
     failure: null,
     ...overrides,
@@ -440,9 +458,11 @@ describe("grounded natural-language agent", () => {
         timeoutMs: AGENT_BOUNDS.toolDeadlineMs,
       }),
     );
-    expect(result.filters).toEqual(searchInput);
-    expect(result.propertyIds).toEqual([propertyId]);
-    expect(result.properties[0]?.propertyId).toBe(propertyId);
+    expect(result.filters).toEqual(modelReportedSearchInput);
+    expect(result.propertyRefs).toEqual([propertyRef]);
+    expect(result.properties[0]?.propertyRef).toBe(propertyRef);
+    expect(JSON.stringify(result)).not.toContain(propertyId);
+    expect(JSON.stringify(result)).not.toContain(evidenceId);
     expect(result.answer).toBe(
       "Retrieved 1 validated Oracle property. Review the MCP-backed records and evidence below.",
     );
@@ -473,6 +493,7 @@ describe("grounded natural-language agent", () => {
     expect(modelTraffic).not.toContain('"resolvedCenter"');
     const property = propertyResponseFixture.result.data;
     const sensitiveValues = [
+      property.propertyId,
       ...(property.folio.availability === "available" ? [property.folio.value] : []),
       ...(property.address.availability === "available" ? [property.address.value] : []),
       ...(property.coordinates.availability === "available"
@@ -484,6 +505,12 @@ describe("grounded natural-language agent", () => {
       ...(property.ownership.currentOwners.availability === "available"
         ? property.ownership.currentOwners.value.map((owner) => owner.displayName)
         : []),
+      ...(property.ownership.classification.availability === "available"
+        ? [property.ownership.classification.value]
+        : []),
+      ...(property.ownerArea.availability === "available"
+        ? [property.ownerArea.value]
+        : []),
       ...(property.ownership.publicMailingAddress.availability === "available"
         ? Object.values(property.ownership.publicMailingAddress.value).flatMap((fact) =>
             fact.availability === "available"
@@ -493,14 +520,129 @@ describe("grounded natural-language agent", () => {
               : [],
           )
         : []),
+      ...property.evidence.flatMap((evidence) => [
+        evidence.evidenceId,
+        evidence.sourceRecordKey,
+        evidence.sourceArtifactUri,
+        evidence.sourceRecordHash,
+        ...(evidence.publishedCid ? [evidence.publishedCid] : []),
+      ]),
+      ...property.permits.flatMap((permit) => [
+        permit.permitId,
+        ...(permit.permitNumber.availability === "available"
+          ? [permit.permitNumber.value]
+          : []),
+        ...(permit.contractor.availability === "available"
+          ? [
+              permit.contractor.value.name,
+              ...(permit.contractor.value.licenseNumber
+                ? [permit.contractor.value.licenseNumber]
+                : []),
+            ]
+          : []),
+      ]),
     ];
     expect(
       sensitiveValues
-        .filter((value) => value.length >= 6)
+        .filter(
+          (value): value is string => typeof value === "string" && value.length >= 6,
+        )
         .find((value) => modelTraffic.includes(value)),
     ).toBeUndefined();
     expect(modelTraffic).toContain("value_redacted");
     expect(modelTraffic).toContain('"count":2');
+    if (property.ownerArea.availability === "available") {
+      expect(JSON.stringify(result)).not.toContain(property.ownerArea.value);
+    }
+    expect(modelTraffic).toMatch(/property_ref_[A-Za-z0-9_-]{24,64}/);
+    expect(modelTraffic).toMatch(/evidence_ref_[A-Za-z0-9_-]{24,64}/);
+  });
+
+  it("uses unpredictable request-scoped aliases and returns no canonical Oracle identifiers", async () => {
+    async function executeOnce() {
+      let generation = 0;
+      const model = new MockLanguageModelV4({
+        doGenerate: async (options) => {
+          generation += 1;
+          if (generation === 1) {
+            return callTool("prism_v1_search_roofing_opportunities", modelSearchInput);
+          }
+          const traffic = JSON.stringify(options.prompt);
+          const visiblePropertyRef = traffic.match(
+            /property_ref_[A-Za-z0-9_-]{24,64}/,
+          )?.[0];
+          const visibleEvidenceRef = traffic.match(
+            /evidence_ref_[A-Za-z0-9_-]{24,64}/,
+          )?.[0];
+          if (!visiblePropertyRef || !visibleEvidenceRef) {
+            throw new Error("Expected request-scoped references in model tool results.");
+          }
+          return finish({
+            status: "grounded",
+            filters: modelReportedSearchInput,
+            propertyRefs: [visiblePropertyRef],
+            evidenceRefs: [visibleEvidenceRef],
+            missingFields: [],
+            failure: null,
+          });
+        },
+      });
+      const result = await runGroundedAgentImplementation({
+        model,
+        oracleClient: fixtureOracle(),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      });
+      return { model, result };
+    }
+
+    const first = await executeOnce();
+    const second = await executeOnce();
+    expect(first.result.propertyRefs[0]).not.toBe(second.result.propertyRefs[0]);
+    expect(first.result.evidenceRefs[0]).not.toBe(second.result.evidenceRefs[0]);
+    for (const execution of [first, second]) {
+      const modelTraffic = JSON.stringify(execution.model.doGenerateCalls);
+      const browserPayload = JSON.stringify(execution.result);
+      for (const canonicalIdentifier of [propertyId, evidenceId]) {
+        expect(modelTraffic).not.toContain(canonicalIdentifier);
+        expect(browserPayload).not.toContain(canonicalIdentifier);
+      }
+    }
+  });
+
+  it("reports measured model/tool execution without inventing provider attempts", async () => {
+    const telemetry = vi.fn();
+    await runGroundedAgent({
+      model: modelWith(
+        callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+        finish(groundedOutput()),
+      ),
+      oracleClient: fixtureOracle(),
+      nodeEnvironment: "test",
+      sessionIdHash,
+      request: queryRequest,
+      requestedProvider: "mock",
+      requestedModel: "test/mock",
+      onTelemetry: telemetry,
+    });
+
+    expect(telemetry).toHaveBeenCalledOnce();
+    expect(telemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedProvider: "mock",
+        requestedModel: "test/mock",
+        modelGenerations: 2,
+        sdkAttemptCount: 2,
+        sdkRetryCount: 0,
+        providerAttemptCount: {
+          value: null,
+          unavailableReason: "not_observable",
+        },
+        oracleToolCallCount: 1,
+        totalTokens: { value: 40, unavailableReason: null },
+      }),
+    );
   });
 
   it("rejects caller-sensitive values before every model and Oracle invocation", async () => {
@@ -735,20 +877,20 @@ describe("grounded natural-language agent", () => {
     const output = groundedOutput({
       missingFields: [
         {
-          propertyId,
-          permitId: null,
+          propertyRef,
+          permitRef: null,
           field: "permits",
           reason: "no_permit_record_returned",
         },
         {
-          propertyId,
-          permitId: null,
+          propertyRef,
+          permitRef: null,
           field: "contractor",
           reason: "no_permit_record_returned",
         },
         {
-          propertyId,
-          permitId: null,
+          propertyRef,
+          permitRef: null,
           field: "bbbRating",
           reason: "no_permit_record_returned",
         },
@@ -776,14 +918,14 @@ describe("grounded natural-language agent", () => {
   it("preserves unavailable contact fields as MCP-backed missing data", async () => {
     const missingFields = [
       {
-        propertyId,
-        permitId: null,
+        propertyRef,
+        permitRef: null,
         field: "ownership.phone",
         reason: "source_not_collected",
       },
       {
-        propertyId,
-        permitId: null,
+        propertyRef,
+        permitRef: null,
         field: "ownership.email",
         reason: "source_not_collected",
       },
@@ -800,14 +942,7 @@ describe("grounded natural-language agent", () => {
       request: queryRequest,
     });
     expect(result.missingFields).toEqual(missingFields);
-    expect(result.properties[0]?.ownership.phone).toMatchObject({
-      availability: "unavailable",
-      value: null,
-    });
-    expect(result.properties[0]?.ownership.email).toMatchObject({
-      availability: "unavailable",
-      value: null,
-    });
+    expect(result.properties[0]).not.toHaveProperty("ownership");
   });
 
   it("rejects malformed tool arguments before Oracle is called", async () => {
@@ -856,10 +991,10 @@ describe("grounded natural-language agent", () => {
     [
       "property",
       groundedOutput({
-        propertyIds: ["prop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        propertyRefs: [`property_ref_${"x".repeat(24)}`],
       }),
     ],
-    ["evidence", groundedOutput({ evidenceRefs: ["ev_not_retrieved"] })],
+    ["evidence", groundedOutput({ evidenceRefs: [`evidence_ref_${"x".repeat(24)}`] })],
   ])("rejects an unsupported %s instead of repairing it", async (_kind, output) => {
     const model = modelWith(
       callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
@@ -873,18 +1008,21 @@ describe("grounded natural-language agent", () => {
         sessionIdHash,
         request: queryRequest,
       }),
-    ).rejects.toBeInstanceOf(AgentGroundingError);
+    ).rejects.toBeInstanceOf(AgentReferenceError);
   });
 
-  it("rejects a permit-only property ID without a returned Property object", async () => {
-    const permit = permitResponseFixture.result.data;
+  it("rejects an unregistered permit reference before Oracle", async () => {
     const model = modelWith(
-      callTool("prism_v1_get_permit", { permitId: permit.permitId }),
+      callTool("prism_v1_get_permit", {
+        permitRef: `permit_ref_${"x".repeat(24)}`,
+      }),
       finish(
         groundedOutput({
           filters: null,
-          propertyIds: [permit.propertyId],
-          evidenceRefs: [permit.evidence[0]!.evidenceId],
+          propertyRefs: [],
+          evidenceRefs: [],
+          status: "cannot_ground",
+          failure: { code: "insufficient_grounding" },
         }),
       ),
     );
@@ -896,7 +1034,53 @@ describe("grounded natural-language agent", () => {
         sessionIdHash,
         request: queryRequest,
       }),
-    ).rejects.toBeInstanceOf(AgentGroundingError);
+    ).rejects.toBeInstanceOf(AgentReferenceError);
+  });
+
+  it("rejects a property reference used in the permit namespace before Oracle", async () => {
+    const oracle = fixtureOracle();
+    const getPermit = vi.spyOn(oracle, "getPermit");
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+      callTool("prism_v1_get_permit", { permitRef: propertyRef }, "wrong-kind"),
+      finish(groundedOutput()),
+    );
+
+    await expect(
+      runGroundedAgent({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toMatchObject({ name: "AgentInvalidToolArgumentsError" });
+    expect(getPermit).not.toHaveBeenCalled();
+  });
+
+  it("rejects a well-formed reference from a different request scope", async () => {
+    const oracle = fixtureOracle();
+    const getProperty = vi.spyOn(oracle, "getProperty");
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+      callTool("prism_v1_get_property", { propertyRef }, "stale-property-reference"),
+      finish(groundedOutput()),
+    );
+
+    await expect(
+      runGroundedAgentImplementation({
+        model,
+        oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+        _internal: {
+          referenceTokenSource: (_kind, ordinal) =>
+            `${"z".repeat(20)}${String(ordinal).padStart(4, "0")}`,
+        },
+      }),
+    ).rejects.toBeInstanceOf(AgentReferenceError);
+    expect(getProperty).not.toHaveBeenCalled();
   });
 
   it("rejects a dangling fact evidence reference without an evidence object", async () => {
@@ -912,18 +1096,75 @@ describe("grounded natural-language agent", () => {
       getQuerySchema: () => base.getQuerySchema(),
     };
     const model = modelWith(
-      callTool("prism_v1_get_property", { propertyId }),
-      finish(
-        groundedOutput({
-          filters: null,
-          evidenceRefs: ["ev_dangling"],
-        }),
-      ),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+      callTool("prism_v1_get_property", { propertyRef }, "property-lookup"),
+      finish(groundedOutput()),
     );
     await expect(
       runGroundedAgent({
         model,
         oracleClient: oracle,
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("rejects a property fact that cites another property's evidence", async () => {
+    const base = fixtureOracle();
+    const response = await base.searchRoofingOpportunities(searchInput);
+    if (!response.ok) throw new Error("Expected fixture search response.");
+    const first = structuredClone(response.data.opportunities[0]!);
+    const second = JSON.parse(
+      JSON.stringify(first)
+        .replaceAll(propertyId, "prop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .replaceAll(evidenceId, "ev_property_b"),
+    ) as SearchResultData["opportunities"][number];
+    (first.property.roofAgeSignal as unknown as { evidenceRefs: string[] }).evidenceRefs =
+      ["ev_property_b"];
+
+    await expect(
+      runGroundedAgent({
+        model: modelWith(
+          callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+          finish(groundedOutput()),
+        ),
+        oracleClient: withSearchOverride(async () => ({
+          ...response,
+          data: { ...response.data, opportunities: [first, second] },
+        })),
+        nodeEnvironment: "test",
+        sessionIdHash,
+        request: queryRequest,
+      }),
+    ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("rejects conflicting evidence objects that reuse one canonical identifier", async () => {
+    const base = fixtureOracle();
+    const response = await base.searchRoofingOpportunities(searchInput);
+    if (!response.ok) throw new Error("Expected fixture search response.");
+    const first = response.data.opportunities[0]!;
+    const second = JSON.parse(
+      JSON.stringify(first).replaceAll(
+        propertyId,
+        "prop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ),
+    ) as SearchResultData["opportunities"][number];
+    (second.property.evidence[0]! as { sourceName: string }).sourceName =
+      "Conflicting source label";
+
+    await expect(
+      runGroundedAgent({
+        model: modelWith(
+          callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+          finish(groundedOutput()),
+        ),
+        oracleClient: withSearchOverride(async () => ({
+          ...response,
+          data: { ...response.data, opportunities: [first, second] },
+        })),
         nodeEnvironment: "test",
         sessionIdHash,
         request: queryRequest,
@@ -946,8 +1187,8 @@ describe("grounded natural-language agent", () => {
     };
     const model = modelWith(
       callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
-      callTool("prism_v1_get_property", { propertyId: unrelatedId }, "property-2"),
-      finish(groundedOutput({ propertyIds: [unrelatedId] })),
+      callTool("prism_v1_get_property", { propertyRef }, "property-2"),
+      finish(groundedOutput()),
     );
     await expect(
       runGroundedAgent({
@@ -960,34 +1201,34 @@ describe("grounded natural-language agent", () => {
     ).rejects.toBeInstanceOf(AgentGroundingError);
   });
 
-  it("rejects evidence returned for a different directly fetched property", async () => {
+  it("rejects evidence that belongs to a different selected property", async () => {
     const unrelatedId = "prop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const response = JSON.parse(
-      JSON.stringify(propertyResponseFixture.result).replaceAll(
-        "ev_fixture_appraiser_001",
-        "ev_property_b",
-      ),
-    ) as typeof propertyResponseFixture.result;
-    response.data.propertyId = unrelatedId;
     const base = fixtureOracle();
-    const oracle: OracleClient = {
-      getServiceInfo: () => base.getServiceInfo(),
-      getPipelineRunSummary: () => base.getPipelineRunSummary(),
-      searchRoofingOpportunities: (input) => base.searchRoofingOpportunities(input),
-      getProperty: async () => response as never,
-      getPermit: (input) => base.getPermit(input),
-      getQuerySchema: () => base.getQuerySchema(),
-    };
+    const response = await base.searchRoofingOpportunities(searchInput);
+    if (!response.ok) throw new Error("Expected fixture search response.");
+    const firstOpportunity = response.data.opportunities[0]!;
+    const secondOpportunity = JSON.parse(
+      JSON.stringify(firstOpportunity)
+        .replaceAll(propertyId, unrelatedId)
+        .replaceAll(evidenceId, "ev_property_b"),
+    ) as SearchResultData["opportunities"][number];
+    const search = vi.fn<OracleClient["searchRoofingOpportunities"]>().mockResolvedValue({
+      ...response,
+      data: {
+        ...response.data,
+        opportunities: [firstOpportunity, secondOpportunity],
+      },
+    });
+    const secondEvidenceRef = `evidence_ref_${"e".repeat(20)}0003` as const;
     const model = modelWith(
       callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
-      callTool("prism_v1_get_property", { propertyId: unrelatedId }, "property-b"),
-      finish(groundedOutput({ evidenceRefs: ["ev_property_b"] })),
+      finish(groundedOutput({ evidenceRefs: [secondEvidenceRef] })),
     );
 
     await expect(
       runGroundedAgent({
         model,
-        oracleClient: oracle,
+        oracleClient: withSearchOverride(search),
         nodeEnvironment: "test",
         sessionIdHash,
         request: queryRequest,
@@ -1009,8 +1250,9 @@ describe("grounded natural-language agent", () => {
     };
     const model = modelWith(
       callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
-      callTool("prism_v1_get_permit", { permitId: permit.data.permitId }, "permit-b"),
-      finish(groundedOutput({ evidenceRefs: [permit.data.evidence[0]!.evidenceId] })),
+      callTool("prism_v1_get_property", { propertyRef }, "property-with-permit"),
+      callTool("prism_v1_get_permit", { permitRef }, "permit-b"),
+      finish(groundedOutput()),
     );
 
     await expect(
@@ -1025,27 +1267,14 @@ describe("grounded natural-language agent", () => {
   });
 
   it("rejects missing-field claims for a property outside the output", async () => {
-    const unrelatedId = "prop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const response = structuredClone(propertyResponseFixture.result);
-    response.data.propertyId = unrelatedId;
-    const base = fixtureOracle();
-    const oracle: OracleClient = {
-      getServiceInfo: () => base.getServiceInfo(),
-      getPipelineRunSummary: () => base.getPipelineRunSummary(),
-      searchRoofingOpportunities: (input) => base.searchRoofingOpportunities(input),
-      getProperty: async () => response as never,
-      getPermit: (input) => base.getPermit(input),
-      getQuerySchema: () => base.getQuerySchema(),
-    };
     const model = modelWith(
       callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
-      callTool("prism_v1_get_property", { propertyId: unrelatedId }, "property-b"),
       finish(
         groundedOutput({
           missingFields: [
             {
-              propertyId: unrelatedId,
-              permitId: null,
+              propertyRef: `property_ref_${"x".repeat(24)}`,
+              permitRef: null,
               field: "ownership.phone",
               reason: "source_not_collected",
             },
@@ -1057,26 +1286,21 @@ describe("grounded natural-language agent", () => {
     await expect(
       runGroundedAgent({
         model,
-        oracleClient: oracle,
+        oracleClient: fixtureOracle(),
         nodeEnvironment: "test",
         sessionIdHash,
         request: queryRequest,
       }),
-    ).rejects.toBeInstanceOf(AgentGroundingError);
+    ).rejects.toBeInstanceOf(AgentReferenceError);
   });
 
   it("redacts contractor values from permit tool traffic", async () => {
     const permit = permitResponseFixture.result.data;
     const model = modelWith(
-      callTool("prism_v1_get_permit", { permitId: permit.permitId }),
-      finish({
-        status: "cannot_ground",
-        filters: null,
-        propertyIds: [],
-        evidenceRefs: [],
-        missingFields: [],
-        failure: { code: "unsupported_request" },
-      }),
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+      callTool("prism_v1_get_property", { propertyRef }, "property-with-permit"),
+      callTool("prism_v1_get_permit", { permitRef }, "permit-lookup"),
+      finish(groundedOutput()),
     );
     await runGroundedAgent({
       model,
@@ -1119,7 +1343,7 @@ describe("grounded natural-language agent", () => {
 
       await expect(pending).resolves.toMatchObject({
         status: "grounded",
-        propertyIds: [propertyId],
+        propertyRefs: [propertyRef],
       });
       expect(AGENT_BOUNDS.toolDeadlineMs).toBe(45_000);
       expect(AGENT_BOUNDS.stepDeadlineMs).toBeGreaterThan(AGENT_BOUNDS.toolDeadlineMs);
@@ -1138,7 +1362,7 @@ describe("grounded natural-language agent", () => {
       finish({
         status: "cannot_ground",
         filters: null,
-        propertyIds: [],
+        propertyRefs: [],
         evidenceRefs: [],
         missingFields: [],
         failure: {
@@ -1184,7 +1408,7 @@ describe("grounded natural-language agent", () => {
       const output: AgentModelOutput = {
         status: "cannot_ground",
         filters: null,
-        propertyIds: [],
+        propertyRefs: [],
         evidenceRefs: [],
         missingFields: [],
         failure: { code: failureCode },
@@ -1207,7 +1431,7 @@ describe("grounded natural-language agent", () => {
       finish({
         status: "cannot_ground",
         filters: modelReportedSearchInput,
-        propertyIds: [],
+        propertyRefs: [],
         evidenceRefs: [],
         missingFields: [],
         failure: { code: "no_results" },
@@ -1222,6 +1446,39 @@ describe("grounded natural-language agent", () => {
         request: queryRequest,
       }),
     ).rejects.toBeInstanceOf(AgentGroundingError);
+  });
+
+  it("accepts zero-result grounding with no evidence and no property claim", async () => {
+    const base = fixtureOracle();
+    const response = await base.searchRoofingOpportunities(searchInput);
+    if (!response.ok) throw new Error("Expected fixture search response.");
+    const result = await runGroundedAgent({
+      model: modelWith(
+        callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+        finish({
+          status: "cannot_ground",
+          filters: modelReportedSearchInput,
+          propertyRefs: [],
+          evidenceRefs: [],
+          missingFields: [],
+          failure: { code: "no_results" },
+        }),
+      ),
+      oracleClient: withSearchOverride(async () => ({
+        ...response,
+        data: { ...response.data, opportunities: [] },
+      })),
+      nodeEnvironment: "test",
+      sessionIdHash,
+      request: queryRequest,
+    });
+
+    expect(result).toMatchObject({
+      status: "cannot_ground",
+      propertyRefs: [],
+      evidenceRefs: [],
+      failure: { code: "no_results" },
+    });
   });
 
   it("rejects model-authored prose, invented facts, PII, and SQL", async () => {
@@ -1268,10 +1525,14 @@ describe("grounded natural-language agent", () => {
   it("stops excessive tool calls at the deterministic tool-call bound", async () => {
     const oracle = fixtureOracle();
     const getProperty = vi.spyOn(oracle, "getProperty");
-    const calls = Array.from({ length: 5 }, (_, index) =>
-      callTool("prism_v1_get_property", { propertyId }, `property-${index}`),
+    const calls = Array.from({ length: 4 }, (_, index) =>
+      callTool("prism_v1_get_property", { propertyRef }, `property-${index}`),
     );
-    const model = modelWith(...calls, finish(groundedOutput()));
+    const model = modelWith(
+      callTool("prism_v1_search_roofing_opportunities", modelSearchInput),
+      ...calls,
+      finish(groundedOutput()),
+    );
     await expect(
       runGroundedAgent({
         model,
@@ -1281,7 +1542,7 @@ describe("grounded natural-language agent", () => {
         request: queryRequest,
       }),
     ).rejects.toBeInstanceOf(AgentToolLimitError);
-    expect(getProperty).toHaveBeenCalledTimes(4);
+    expect(getProperty).toHaveBeenCalledTimes(3);
   });
 
   it("enforces the total request timeout", async () => {

@@ -7,6 +7,7 @@ import type {
   OracleCallOptions,
   OracleClient,
   OracleMcpToolName,
+  OracleMcpToolDescriptor,
   OracleMcpTransport,
   OracleResult,
   Permit,
@@ -32,6 +33,15 @@ export class ContractValidatingOracleClient implements OracleClient {
     private readonly transport: OracleMcpTransport,
     private readonly nodeEnvironment: NodeEnvironment,
   ) {}
+
+  discoverTools(
+    options?: OracleCallOptions,
+  ): Promise<readonly OracleMcpToolDescriptor[]> {
+    if (!this.transport.listTools) {
+      throw new OracleInputValidationError("tool discovery transport");
+    }
+    return this.transport.listTools(options);
+  }
 
   private async call<T>(
     tool: OracleMcpToolName,

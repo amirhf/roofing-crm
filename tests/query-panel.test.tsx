@@ -7,13 +7,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import searchFixture from "../contracts/fixtures/search-response.json";
 import type { NaturalLanguageQueryResult } from "../src/agent/types";
 import { QueryPanel } from "../src/components/query-panel";
-import type { OracleResult, SearchResultData } from "../src/oracle/types";
+
+const SEARCH_CONTEXT = {
+  county: "pasco" as const,
+  center: { kind: "coordinates" as const, latitude: 28.3, longitude: -82.4 },
+  radius: { value: 10, unit: "mi" as const },
+  filters: {},
+};
+import type { Fact, OracleResult, SearchResultData } from "../src/oracle/types";
 
 const oracleResult = searchFixture.result as unknown as Extract<
   OracleResult<SearchResultData>,
   { ok: true }
 >;
 const property = oracleResult.data.opportunities[0]!.property;
+const propertyRef = `property_ref_${"p".repeat(24)}` as const;
+const evidenceRef = `evidence_ref_${"e".repeat(24)}` as const;
+
+function safeFact<T>(fact: Fact<T>): Fact<T> {
+  return { ...fact, evidenceRefs: [evidenceRef] };
+}
+
 const completeResult: NaturalLanguageQueryResult = {
   status: "complete",
   grounded: {
@@ -21,29 +35,82 @@ const completeResult: NaturalLanguageQueryResult = {
     answer:
       "Retrieved 1 validated Oracle property. Review the MCP-backed records and evidence below.",
     filters: {
-      county: "pasco",
-      center: { kind: "place", text: "Zephyrhills, Florida" },
       radius: { value: 8, unit: "mi" },
       filters: {
         roofAge: { operator: "gte", years: 18, basis: "direct_or_proxy" },
         permit: { roofingOnly: true, openOnly: true, minOpenDays: 45 },
+        ownership: null,
+        freshness: null,
+        matchMode: "all",
       },
       sort: "distance_asc",
-      page: { limit: 10 },
+      page: { limit: 10, continuation: false },
+      asOf: null,
     },
-    propertyIds: [property.propertyId],
-    evidenceRefs: [property.evidence[0]!.evidenceId],
+    propertyRefs: [propertyRef],
+    evidenceRefs: [evidenceRef],
     missingFields: [
       {
-        propertyId: property.propertyId,
-        permitId: null,
+        propertyRef,
+        permitRef: null,
         field: "bbbRating",
         reason: "no_permit_record_returned",
       },
     ],
     failure: null,
-    properties: [property],
-    evidence: [property.evidence[0]!],
+    properties: [
+      {
+        propertyRef,
+        county: "pasco",
+        yearBuilt: safeFact(property.yearBuilt),
+        roofInstallationDate: safeFact(property.roofInstallationDate),
+        roofAgeSignal: safeFact(property.roofAgeSignal),
+        ownershipDurationYears: safeFact(property.ownershipDurationYears),
+        openRoofingPermitCount: safeFact(property.openRoofingPermitCount),
+        maximumOpenRoofingPermitDays: safeFact(property.maximumOpenRoofingPermitDays),
+        permits: [],
+        evidenceRefs: [evidenceRef],
+      },
+    ],
+    evidence: [
+      {
+        evidenceRef,
+        sourceName: property.evidence[0]!.sourceName,
+        observedAt: property.evidence[0]!.observedAt,
+        retrievedAt: property.evidence[0]!.retrievedAt,
+        loadedAt: property.evidence[0]!.loadedAt,
+      },
+    ],
+  },
+  metadata: {
+    requestId: "request_test",
+    requestedProvider: "mock",
+    requestedModel: "test/model",
+    sdkResponseModel: { value: "test/model", unavailableReason: null },
+    resolvedProvider: { value: null, unavailableReason: "not_observable" },
+    resolvedModel: { value: null, unavailableReason: "not_observable" },
+    modelGenerations: 2,
+    sdkAttemptCount: 2,
+    sdkRetryCount: 0,
+    providerAttemptCount: { value: null, unavailableReason: "not_observable" },
+    oracleToolCallCount: 1,
+    queryLatencyMs: 20,
+    modelLatencyMs: { value: 10, unavailableReason: null },
+    oracleLatencyMs: 5,
+    gatewayGenerationTimeMs: {
+      value: null,
+      unavailableReason: "bounded_lookup_unsupported",
+    },
+    inputTokens: { value: 20, unavailableReason: null },
+    outputTokens: { value: 10, unavailableReason: null },
+    totalTokens: { value: 30, unavailableReason: null },
+    costUsd: { value: null, unavailableReason: "not_observable" },
+    finishReason: { value: "stop", unavailableReason: null },
+    completion: "grounded",
+    attribution: {
+      kind: "hashed_anonymous_session",
+      tags: ["feature:grounded-property-query", "env:test"],
+    },
   },
 };
 
@@ -65,7 +132,7 @@ describe("grounded query panel", () => {
         resolveResponse = resolve;
       }),
     );
-    render(<QueryPanel />);
+    render(<QueryPanel searchContext={SEARCH_CONTEXT} />);
 
     const input = screen.getByLabelText("Natural-language request");
     await user.type(input, "Older roofs near Zephyrhills with open permits");
@@ -88,12 +155,15 @@ describe("grounded query panel", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", {
-        name: "100 TEST WAY, FIXTURE ZEPHYRHILLS, FL 33540",
+        name: "Grounded property 1",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("ev_fixture_appraiser_001")).toBeInTheDocument();
+    expect(screen.getByText("Validated request-scoped evidence")).toBeInTheDocument();
     expect(screen.getByText("bbbRating")).toBeInTheDocument();
-    expect(screen.getAllByText("Public link unavailable")).not.toHaveLength(0);
+    expect(
+      screen.getByText("Canonical source identifiers stay server-held."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(property.propertyId)).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("status")).toHaveFocus());
 
     const requestBody = JSON.parse(
@@ -103,7 +173,7 @@ describe("grounded query panel", () => {
       query: "Older roofs near Zephyrhills with open permits",
       searchContext: {
         county: "pasco",
-        center: { kind: "coordinates", latitude: 28.3232, longitude: -82.4319 },
+        center: { kind: "coordinates", latitude: 28.3, longitude: -82.4 },
         radius: { value: 10, unit: "mi" },
         filters: {},
       },
@@ -121,7 +191,7 @@ describe("grounded query panel", () => {
         { status: 503, headers: { "Content-Type": "application/json" } },
       ),
     );
-    render(<QueryPanel />);
+    render(<QueryPanel searchContext={SEARCH_CONTEXT} />);
     const input = screen.getByLabelText("Natural-language request");
     await user.type(input, "Show older roofs{Control>}{Enter}{/Control}");
     expect(await screen.findByText("Model not configured")).toBeInTheDocument();
@@ -141,7 +211,7 @@ describe("grounded query panel", () => {
           headers: { "Content-Type": "application/json" },
         }),
       );
-      render(<QueryPanel />);
+      render(<QueryPanel searchContext={SEARCH_CONTEXT} />);
 
       await user.type(screen.getByLabelText("Natural-language request"), query);
       await user.click(screen.getByRole("button", { name: "Run grounded query" }));
@@ -157,8 +227,8 @@ describe("grounded query panel", () => {
           county: "pasco",
           center: {
             kind: "coordinates",
-            latitude: 28.3232,
-            longitude: -82.4319,
+            latitude: 28.3,
+            longitude: -82.4,
           },
           radius: { value: 10, unit: "mi" },
           filters: {},
@@ -189,7 +259,7 @@ describe("grounded query panel", () => {
         { status: code === "timeout" ? 504 : 422 },
       ),
     );
-    render(<QueryPanel />);
+    render(<QueryPanel searchContext={SEARCH_CONTEXT} />);
     await user.type(screen.getByLabelText("Natural-language request"), "Test query");
     await user.click(screen.getByRole("button", { name: "Run grounded query" }));
     expect(await screen.findByText(heading)).toBeInTheDocument();

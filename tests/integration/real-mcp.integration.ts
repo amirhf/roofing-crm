@@ -34,6 +34,8 @@ const MISSING_COORDINATE_PROPERTY_ID =
   process.env.REAL_MCP_MISSING_COORDINATE_PROPERTY_ID;
 const SESSION_SECRET = "local-real-mcp-integration-session-secret";
 const SESSION_ID_HASH = `sha256:${"a".repeat(64)}` as const;
+const PROPERTY_REF = `property_ref_${"p".repeat(20)}0000` as const;
+const EVIDENCE_REF = `evidence_ref_${"e".repeat(20)}0001` as const;
 const origin = "http://127.0.0.1:3101";
 const transport = new StreamableHttpOracleMcpTransport(new URL(MCP_URL));
 const oracle = new ContractValidatingOracleClient(transport, "development");
@@ -343,11 +345,7 @@ describe("real Oracle MCP interoperability", () => {
 
 describe("mock model with real MCP", () => {
   it("grounds only the allowed tool result without exposing owner/contact attribution", async () => {
-    const opportunity = firstPage.data.opportunities.find(
-      ({ property }) =>
-        property.ownership.phone.availability === "unavailable" &&
-        property.ownership.email.availability === "unavailable",
-    );
+    const opportunity = firstPage.data.opportunities[0];
     expect(opportunity).toBeDefined();
     const property = opportunity!.property;
     if (
@@ -356,22 +354,21 @@ describe("mock model with real MCP", () => {
     ) {
       throw new Error("Expected explicit unavailable contact facts.");
     }
-    const evidenceId = property.evidence[0]!.evidenceId;
     const output: AgentModelOutput = {
       status: "grounded",
       filters: modelReportedSearchInput,
-      propertyIds: [property.propertyId],
-      evidenceRefs: [evidenceId],
+      propertyRefs: [PROPERTY_REF],
+      evidenceRefs: [EVIDENCE_REF],
       missingFields: [
         {
-          propertyId: property.propertyId,
-          permitId: null,
+          propertyRef: PROPERTY_REF,
+          permitRef: null,
           field: "ownership.phone",
           reason: property.ownership.phone.reason,
         },
         {
-          propertyId: property.propertyId,
-          permitId: null,
+          propertyRef: PROPERTY_REF,
+          permitRef: null,
           field: "ownership.email",
           reason: property.ownership.email.reason,
         },
@@ -398,6 +395,10 @@ describe("mock model with real MCP", () => {
       nodeEnvironment: "development",
       sessionIdHash: SESSION_ID_HASH,
       request,
+      _internal: {
+        referenceTokenSource: (kind, ordinal) =>
+          `${kind[0]!.repeat(20)}${String(ordinal).padStart(4, "0")}`,
+      },
     });
 
     expect(search).toHaveBeenCalledOnce();
@@ -417,10 +418,13 @@ describe("mock model with real MCP", () => {
         .filter((value) => value.length >= 6)
         .some((value) => modelTraffic.includes(value)),
     ).toBe(false);
-    expect(result.propertyIds).toEqual([property.propertyId]);
-    expect(result.evidenceRefs).toEqual([evidenceId]);
-    expect(result.properties[0]?.ownership.phone.availability).toBe("unavailable");
-    expect(result.properties[0]?.ownership.email.availability).toBe("unavailable");
+    expect(result.propertyRefs).toEqual([PROPERTY_REF]);
+    expect(result.evidenceRefs).toEqual([EVIDENCE_REF]);
+    expect(result.missingFields.map((field) => field.field)).toEqual([
+      "ownership.phone",
+      "ownership.email",
+    ]);
+    expect(JSON.stringify(result)).not.toContain(property.propertyId);
   });
 });
 

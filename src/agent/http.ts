@@ -2,6 +2,7 @@ import "server-only";
 
 import { GatewayError } from "@ai-sdk/gateway";
 import type { AgentModelAdapter } from "./provider";
+import type { RequestReferenceTokenSource } from "./request-references";
 import { z } from "zod";
 
 import { createAgentModelAdapter } from "@/agent/provider";
@@ -9,7 +10,11 @@ import {
   agentBoundsForOracleTimeout,
   naturalLanguageQueryRequestSchema,
 } from "@/agent/schemas";
-import type { NaturalLanguageQueryResult } from "@/agent/types";
+import type {
+  AgentExecutionTelemetry,
+  NaturalLanguageQueryResult,
+  QuerySuccessMetadata,
+} from "@/agent/types";
 import {
   ApplicationConfigurationError,
   loadApplicationRuntimeConfig,
@@ -17,6 +22,11 @@ import {
 } from "@/config/runtime";
 import { AgentConfigurationError, AgentModelSlugError } from "@/config/agent";
 import { createOracleClient } from "@/oracle/factory";
+import {
+  ensureOracleReadiness,
+  OracleReadinessError,
+  oracleReadinessStage,
+} from "@/oracle/readiness";
 import {
   ContractValidationError,
   OracleSchemaHashMismatchError,
@@ -29,8 +39,10 @@ import { jsonResponse } from "@/server/request-context";
 import {
   createRequestId,
   recordServerError,
+  recordServerQuerySuccess,
   sanitizedErrorClass,
   type ServerErrorEvent,
+  type ServerQuerySuccessEvent,
 } from "@/server/error-telemetry";
 import {
   assertSameOrigin,
@@ -44,19 +56,57 @@ import {
   AgentIntentValidationError,
   AgentMcpError,
   AgentPrivacyError,
+  AgentReferenceError,
   AgentResponseSizeError,
   AgentToolLimitError,
 } from "./errors";
-import { runGroundedAgent } from "./grounded-agent";
+import { agentGatewayTags, runGroundedAgent } from "./grounded-agent";
 import { acquireAgentSession } from "./session-gate";
 
 interface QueryHandlerDependencies {
   readonly loadConfig?: () => ApplicationRuntimeConfig;
   readonly createModel?: (config: ApplicationRuntimeConfig) => AgentModelAdapter | null;
   readonly createOracle?: typeof createOracleClient;
+  readonly ensureReadiness?: typeof ensureOracleReadiness;
   readonly acquireSession?: typeof acquireAgentSession;
   readonly runAgent?: typeof runGroundedAgent;
   readonly recordError?: (event: ServerErrorEvent) => void;
+  readonly recordSuccess?: (event: ServerQuerySuccessEvent) => void;
+  readonly referenceTokenSource?: RequestReferenceTokenSource;
+}
+
+const QUERY_ROUTE_DEADLINE_MS = 85_000;
+
+function successLogEvent(
+  metadata: QuerySuccessMetadata,
+  sessionIdHash: `sha256:${string}`,
+): ServerQuerySuccessEvent {
+  return {
+    requestId: metadata.requestId,
+    operation: "grounded_property_query",
+    sessionIdHash,
+    requestedProvider: metadata.requestedProvider,
+    requestedModel: metadata.requestedModel,
+    sdkResponseModel: metadata.sdkResponseModel.value,
+    resolvedProvider: metadata.resolvedProvider.value,
+    resolvedModel: metadata.resolvedModel.value,
+    modelGenerations: metadata.modelGenerations,
+    sdkAttemptCount: metadata.sdkAttemptCount,
+    sdkRetryCount: metadata.sdkRetryCount,
+    providerAttemptCount: metadata.providerAttemptCount.value,
+    oracleToolCallCount: metadata.oracleToolCallCount,
+    queryLatencyMs: metadata.queryLatencyMs,
+    modelLatencyMs: metadata.modelLatencyMs.value,
+    oracleLatencyMs: metadata.oracleLatencyMs,
+    gatewayGenerationTimeMs: metadata.gatewayGenerationTimeMs.value,
+    inputTokens: metadata.inputTokens.value,
+    outputTokens: metadata.outputTokens.value,
+    totalTokens: metadata.totalTokens.value,
+    costUsd: metadata.costUsd.value,
+    finishReason: metadata.finishReason.value,
+    completion: metadata.completion,
+    tags: metadata.attribution.tags,
+  };
 }
 
 function errorResult(
@@ -192,9 +242,27 @@ function classifiedError(error: unknown): {
   if (error instanceof AgentGroundingError) {
     return { body: errorResult("grounding_rejected", error.message), status: 422 };
   }
+  if (error instanceof AgentReferenceError) {
+    return {
+      body: errorResult(
+        "invalid_tool_arguments",
+        "The model used an invalid request-scoped Oracle reference.",
+      ),
+      status: 422,
+    };
+  }
   if (error instanceof AgentMcpError) {
     return {
       body: errorResult("mcp_error", "Oracle MCP could not complete the request."),
+      status: 503,
+    };
+  }
+  if (error instanceof OracleReadinessError) {
+    return {
+      body: errorResult(
+        "mcp_error",
+        "Oracle readiness validation is temporarily unavailable.",
+      ),
       status: 503,
     };
   }
@@ -343,12 +411,19 @@ export function createQueryPostHandler(
   const createModel =
     dependencies.createModel ?? ((config) => createAgentModelAdapter(config.agent));
   const createOracle = dependencies.createOracle ?? createOracleClient;
+  const ensureReadiness = dependencies.ensureReadiness ?? ensureOracleReadiness;
   const acquireSession = dependencies.acquireSession ?? acquireAgentSession;
   const runAgent = dependencies.runAgent ?? runGroundedAgent;
   const reportError = dependencies.recordError ?? recordServerError;
+  const reportSuccess = dependencies.recordSuccess ?? recordServerQuerySuccess;
 
   return async function queryPost(request: Request): Promise<Response> {
     const startedAt = performance.now();
+    const requestId = createRequestId();
+    const routeSignal = AbortSignal.any([
+      request.signal,
+      AbortSignal.timeout(QUERY_ROUTE_DEADLINE_MS),
+    ]);
     let setCookieHeader: string | null = null;
     let release: (() => void) | null = null;
     try {
@@ -372,19 +447,52 @@ export function createQueryPostHandler(
       const rawInput: unknown = await request.json();
       const input = naturalLanguageQueryRequestSchema.parse(rawInput);
       release = acquireSession(session.sessionIdHash);
+      const execution: { value: AgentExecutionTelemetry | null } = { value: null };
+      const oracleClient = createOracle(config.oracle);
+      await ensureReadiness(config.oracle, oracleClient, routeSignal);
       const grounded = await runAgent({
         model: model.model,
-        oracleClient: createOracle(config.oracle),
+        oracleClient,
         nodeEnvironment: config.nodeEnvironment,
         sessionIdHash: session.sessionIdHash,
         request: input,
-        abortSignal: request.signal,
+        abortSignal: routeSignal,
         bounds: agentBoundsForOracleTimeout(config.oracle.oracleMcpTimeoutMs),
+        requestedProvider: model.provider,
+        requestedModel: model.modelId,
+        onTelemetry: (value) => {
+          execution.value = value;
+        },
+        ...(dependencies.referenceTokenSource
+          ? {
+              _internal: {
+                referenceTokenSource: dependencies.referenceTokenSource,
+              },
+            }
+          : {}),
       });
+      if (!execution.value) {
+        throw Object.assign(new Error("Successful agent execution omitted telemetry."), {
+          name: "AgentTelemetryUnavailableError",
+        });
+      }
+      const telemetry = execution.value;
+      const metadata: QuerySuccessMetadata = {
+        ...telemetry,
+        requestId,
+        queryLatencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        completion: grounded.status,
+        attribution: {
+          kind: "hashed_anonymous_session",
+          tags: agentGatewayTags(config.nodeEnvironment),
+        },
+      };
       const result: NaturalLanguageQueryResult = {
         status: "complete",
         grounded,
+        metadata,
       };
+      reportSuccess(successLogEvent(metadata, session.sessionIdHash));
       return jsonResponse(result, {}, setCookieHeader);
     } catch (error) {
       if (error instanceof SameOriginError) {
@@ -403,12 +511,13 @@ export function createQueryPostHandler(
         );
       }
       const classified = classifiedError(error);
-      const requestId = createRequestId();
+      const initializationStage = oracleReadinessStage(error);
       reportError({
         requestId,
         operation: "grounded_property_query",
         errorClass: sanitizedErrorClass(error),
         latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        ...(initializationStage ? { initializationStage } : {}),
       });
       const body =
         classified.body.status === "error"

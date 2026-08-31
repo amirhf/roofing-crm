@@ -4,20 +4,16 @@ import { useRef, useState } from "react";
 
 import { AGENT_BOUNDS } from "@/agent/schemas";
 import type {
+  GroundedQueryPermit,
+  GroundedQueryProperty,
   GroundedNaturalLanguageResult,
   NaturalLanguageQueryRequest,
   NaturalLanguageQueryResult,
+  QuerySuccessMetadata,
 } from "@/agent/types";
-import type { Fact, Permit, Property } from "@/oracle/types";
+import type { Fact } from "@/oracle/types";
 
 type QueryState = "idle" | "loading" | "complete" | "not_configured" | "error";
-
-const PASCO_QUERY_CONTEXT: NaturalLanguageQueryRequest["searchContext"] = {
-  county: "pasco",
-  center: { kind: "coordinates", latitude: 28.3232, longitude: -82.4319 },
-  radius: { value: 10, unit: "mi" },
-  filters: {},
-};
 
 const errorHeadings: Record<
   Extract<NaturalLanguageQueryResult, { status: "error" }>["error"]["code"],
@@ -46,33 +42,39 @@ function factText<T>(fact: Fact<T>, format: (value: T) => string): string {
     : fact.reason.replaceAll("_", " ");
 }
 
-function PermitSummary({ permit }: Readonly<{ permit: Permit }>) {
+function metricText<T>(
+  metric: Readonly<{ value: T | null; unavailableReason: string | null }>,
+  format: (value: T) => string = String,
+): string {
+  return metric.value === null
+    ? (metric.unavailableReason ?? "unavailable")
+    : format(metric.value as T);
+}
+
+function PermitSummary({ permit }: Readonly<{ permit: GroundedQueryPermit }>) {
   return (
     <li className="agent-permit-row">
-      <strong>{factText(permit.permitNumber, String)}</strong>
+      <strong>Validated permit record</strong>
       <span>{factText(permit.openDurationDays, (days) => `${days} days open`)}</span>
-      <span>{factText(permit.contractor, (contractor) => contractor.name)}</span>
+      <span>{factText(permit.contractor, () => "Contractor value available")}</span>
       <span>BBB {factText(permit.bbbRating, String)}</span>
     </li>
   );
 }
 
-function AgentPropertyCard({ property }: Readonly<{ property: Property }>) {
+function AgentPropertyCard({
+  property,
+  ordinal,
+}: Readonly<{ property: GroundedQueryProperty; ordinal: number }>) {
+  const headingId = `agent-property-${ordinal}`;
   return (
-    <article
-      className="agent-property-card"
-      aria-labelledby={`agent-${property.propertyId}`}
-    >
+    <article className="agent-property-card" aria-labelledby={headingId}>
       <header>
         <p className="eyebrow">Validated MCP record</p>
-        <h3 id={`agent-${property.propertyId}`}>{factText(property.address, String)}</h3>
-        <p className="mono-id">{property.propertyId}</p>
+        <h3 id={headingId}>Grounded property {ordinal}</h3>
+        <p className="mono-id">Request-scoped reference</p>
       </header>
       <dl className="agent-fact-grid">
-        <div>
-          <dt>Parcel / folio</dt>
-          <dd>{factText(property.folio, String)}</dd>
-        </div>
         <div>
           <dt>Roof signal</dt>
           <dd>
@@ -97,7 +99,7 @@ function AgentPropertyCard({ property }: Readonly<{ property: Property }>) {
       {property.permits.length ? (
         <ul className="agent-permit-list" aria-label="Returned permit facts">
           {property.permits.map((permit) => (
-            <PermitSummary permit={permit} key={permit.permitId} />
+            <PermitSummary permit={permit} key={permit.permitRef} />
           ))}
         </ul>
       ) : (
@@ -109,7 +111,13 @@ function AgentPropertyCard({ property }: Readonly<{ property: Property }>) {
   );
 }
 
-function GroundedResult({ result }: Readonly<{ result: GroundedNaturalLanguageResult }>) {
+function GroundedResult({
+  result,
+  metadata,
+}: Readonly<{
+  result: GroundedNaturalLanguageResult;
+  metadata: QuerySuccessMetadata | null;
+}>) {
   return (
     <div className="agent-result">
       <header className="agent-answer">
@@ -146,8 +154,12 @@ function GroundedResult({ result }: Readonly<{ result: GroundedNaturalLanguageRe
             <h2 id="agent-records-heading">Retrieved properties</h2>
             <span>{result.properties.length}</span>
           </div>
-          {result.properties.map((property) => (
-            <AgentPropertyCard property={property} key={property.propertyId} />
+          {result.properties.map((property, index) => (
+            <AgentPropertyCard
+              property={property}
+              ordinal={index + 1}
+              key={property.propertyRef}
+            />
           ))}
         </section>
       ) : null}
@@ -158,16 +170,10 @@ function GroundedResult({ result }: Readonly<{ result: GroundedNaturalLanguageRe
           {result.evidence.length ? (
             <ul className="agent-evidence-list">
               {result.evidence.map((evidence) => (
-                <li key={evidence.evidenceId}>
+                <li key={evidence.evidenceRef}>
                   <strong>{evidence.sourceName}</strong>
-                  <span>{evidence.evidenceId}</span>
-                  {evidence.sourceUrl ? (
-                    <a href={evidence.sourceUrl} target="_blank" rel="noreferrer">
-                      Open source evidence
-                    </a>
-                  ) : (
-                    <small>Public link unavailable</small>
-                  )}
+                  <span>Validated request-scoped evidence</span>
+                  <small>Canonical source identifiers stay server-held.</small>
                 </li>
               ))}
             </ul>
@@ -181,7 +187,7 @@ function GroundedResult({ result }: Readonly<{ result: GroundedNaturalLanguageRe
             <ul className="agent-missing-list">
               {result.missingFields.map((field) => (
                 <li
-                  key={`${field.propertyId}-${field.permitId ?? "property"}-${field.field}`}
+                  key={`${field.propertyRef}-${field.permitRef ?? "property"}-${field.field}`}
                 >
                   <strong>{field.field}</strong>
                   <span>{field.reason.replaceAll("_", " ")}</span>
@@ -193,14 +199,101 @@ function GroundedResult({ result }: Readonly<{ result: GroundedNaturalLanguageRe
           )}
         </section>
       </div>
+      {metadata ? (
+        <details className="agent-filter-proof">
+          <summary>Execution metadata</summary>
+          <dl className="agent-fact-grid">
+            <div>
+              <dt>Requested provider</dt>
+              <dd>{metadata.requestedProvider}</dd>
+            </div>
+            <div>
+              <dt>Requested model</dt>
+              <dd>{metadata.requestedModel}</dd>
+            </div>
+            <div>
+              <dt>SDK response model</dt>
+              <dd>{metricText(metadata.sdkResponseModel)}</dd>
+            </div>
+            <div>
+              <dt>Resolved provider</dt>
+              <dd>{metricText(metadata.resolvedProvider)}</dd>
+            </div>
+            <div>
+              <dt>Resolved model</dt>
+              <dd>{metricText(metadata.resolvedModel)}</dd>
+            </div>
+            <div>
+              <dt>Model generations</dt>
+              <dd>{metadata.modelGenerations}</dd>
+            </div>
+            <div>
+              <dt>SDK attempts / retries</dt>
+              <dd>
+                {metadata.sdkAttemptCount} / {metadata.sdkRetryCount}
+              </dd>
+            </div>
+            <div>
+              <dt>Provider attempts</dt>
+              <dd>{metricText<number>(metadata.providerAttemptCount, String)}</dd>
+            </div>
+            <div>
+              <dt>Oracle tool calls</dt>
+              <dd>{metadata.oracleToolCallCount}</dd>
+            </div>
+            <div>
+              <dt>Query latency</dt>
+              <dd>{metadata.queryLatencyMs} ms</dd>
+            </div>
+            <div>
+              <dt>Model latency</dt>
+              <dd>
+                {metricText<number>(metadata.modelLatencyMs, (value) => `${value} ms`)}
+              </dd>
+            </div>
+            <div>
+              <dt>Oracle latency</dt>
+              <dd>{metadata.oracleLatencyMs} ms</dd>
+            </div>
+            <div>
+              <dt>Gateway generation time</dt>
+              <dd>
+                {metricText<number>(
+                  metadata.gatewayGenerationTimeMs,
+                  (value) => `${value} ms`,
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Total tokens</dt>
+              <dd>{metricText<number>(metadata.totalTokens, String)}</dd>
+            </div>
+            <div>
+              <dt>Cost (USD)</dt>
+              <dd>{metricText<number>(metadata.costUsd, (value) => value.toFixed(6))}</dd>
+            </div>
+            <div>
+              <dt>Attribution</dt>
+              <dd>Hashed anonymous session · {metadata.attribution.tags.join(" · ")}</dd>
+            </div>
+          </dl>
+        </details>
+      ) : null}
     </div>
   );
 }
 
-export function QueryPanel() {
+export function QueryPanel({
+  searchContext,
+  oracleReady = true,
+}: Readonly<{
+  searchContext: NaturalLanguageQueryRequest["searchContext"];
+  oracleReady?: boolean;
+}>) {
   const [query, setQuery] = useState("");
   const [state, setState] = useState<QueryState>("idle");
   const [result, setResult] = useState<GroundedNaturalLanguageResult | null>(null);
+  const [metadata, setMetadata] = useState<QuerySuccessMetadata | null>(null);
   const [message, setMessage] = useState(
     "Every property and evidence reference is checked against validated Oracle results before display.",
   );
@@ -216,17 +309,18 @@ export function QueryPanel() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!query.trim() || state === "loading") return;
+    if (!query.trim() || state === "loading" || !oracleReady) return;
     const controller = new AbortController();
     controllerRef.current = controller;
     setState("loading");
     setResult(null);
+    setMetadata(null);
     setErrorCode(null);
     setMessage("Translating the request and validating read-only Oracle tool results…");
 
     const input: NaturalLanguageQueryRequest = {
       query: query.trim(),
-      searchContext: PASCO_QUERY_CONTEXT,
+      searchContext,
     };
     try {
       const response = await fetch("/api/query", {
@@ -250,6 +344,7 @@ export function QueryPanel() {
       } else if (payload.status === "complete") {
         setState("complete");
         setResult(payload.grounded);
+        setMetadata(payload.metadata);
         setMessage(
           payload.grounded.status === "grounded"
             ? "Grounding checks passed. Facts below come from validated MCP records."
@@ -327,7 +422,7 @@ export function QueryPanel() {
             <button
               type="submit"
               className="primary-button"
-              disabled={!query.trim() || state === "loading"}
+              disabled={!query.trim() || state === "loading" || !oracleReady}
             >
               {state === "loading" ? "Grounding request…" : "Run grounded query"}
             </button>
@@ -363,12 +458,16 @@ export function QueryPanel() {
                       ? "Server validation complete"
                       : "Grounded boundary ready"}
             </strong>
-            <p>{message}</p>
+            <p>
+              {oracleReady
+                ? message
+                : "Oracle readiness must pass before a grounded Query can run."}
+            </p>
           </div>
         </div>
       </div>
 
-      {result ? <GroundedResult result={result} /> : null}
+      {result ? <GroundedResult result={result} metadata={metadata} /> : null}
     </section>
   );
 }

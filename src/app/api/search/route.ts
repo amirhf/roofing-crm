@@ -5,6 +5,7 @@ import {
   OracleSchemaHashMismatchError,
 } from "@/oracle/contracts";
 import { createOracleClient } from "@/oracle/factory";
+import { ensureOracleReadiness, oracleReadinessStage } from "@/oracle/readiness";
 import { createRequestId, recordServerError } from "@/server/error-telemetry";
 import { classifyOracleSearchError } from "@/server/oracle-search-telemetry";
 import { jsonResponse } from "@/server/request-context";
@@ -12,16 +13,22 @@ import { jsonResponse } from "@/server/request-context";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 65;
+const SEARCH_ROUTE_DEADLINE_MS = 60_000;
 
 export async function POST(request: Request): Promise<Response> {
   const startedAt = performance.now();
+  const routeSignal = AbortSignal.any([
+    request.signal,
+    AbortSignal.timeout(SEARCH_ROUTE_DEADLINE_MS),
+  ]);
   try {
     const input: unknown = await request.json();
     assertValidSearchArguments(input);
     const oracleConfig = loadOracleRuntimeConfig(process.env);
     const client = createOracleClient(oracleConfig);
+    await ensureOracleReadiness(oracleConfig, client, routeSignal);
     const result = await client.searchRoofingOpportunities(input, {
-      signal: request.signal,
+      signal: routeSignal,
       timeoutMs: oracleConfig.oracleMcpTimeoutMs,
     });
     if (!result.ok) {
@@ -53,6 +60,7 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     const requestId = createRequestId();
     const classification = classifyOracleSearchError(error);
+    const initializationStage = oracleReadinessStage(error);
     recordServerError({
       requestId,
       operation: "oracle_property_search",
@@ -60,6 +68,7 @@ export async function POST(request: Request): Promise<Response> {
       latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
       attemptCount: 1,
       statusCategory: classification.statusCategory,
+      ...(initializationStage ? { initializationStage } : {}),
     });
     if (error instanceof ContractValidationError) {
       return jsonResponse(

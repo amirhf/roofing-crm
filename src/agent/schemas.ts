@@ -181,6 +181,15 @@ export const agentModelSearchArgumentsSchema = z
 
 export const propertyIdSchema = z.string().regex(/^prop_[a-f0-9]{32}$/);
 export const permitIdSchema = z.string().regex(/^perm_[a-f0-9]{32}$/);
+export const propertyReferenceSchema = z
+  .string()
+  .regex(/^property_ref_[A-Za-z0-9_-]{24,64}$/);
+export const permitReferenceSchema = z
+  .string()
+  .regex(/^permit_ref_[A-Za-z0-9_-]{24,64}$/);
+export const evidenceReferenceSchema = z
+  .string()
+  .regex(/^evidence_ref_[A-Za-z0-9_-]{24,64}$/);
 
 export const naturalLanguageQueryRequestSchema = z
   .object({
@@ -205,6 +214,15 @@ export const missingFieldSchema = z
   })
   .strict();
 
+export const modelMissingFieldSchema = z
+  .object({
+    propertyRef: propertyReferenceSchema,
+    permitRef: permitReferenceSchema.nullable(),
+    field: z.string().min(1).max(100),
+    reason: z.string().min(1).max(100),
+  })
+  .strict();
+
 const groundingFailureSchema = z
   .object({
     code: z.enum([
@@ -220,19 +238,19 @@ export const agentModelOutputSchema = z
   .object({
     status: z.enum(["grounded", "cannot_ground"]),
     filters: agentModelSearchArgumentsSchema.nullable(),
-    propertyIds: z
-      .array(propertyIdSchema)
+    propertyRefs: z
+      .array(propertyReferenceSchema)
       .max(AGENT_BOUNDS.maxPropertyIds)
       .refine((values) => new Set(values).size === values.length, {
-        message: "Property IDs must be unique.",
+        message: "Property references must be unique.",
       }),
     evidenceRefs: z
-      .array(z.string().min(1).max(200))
+      .array(evidenceReferenceSchema)
       .max(AGENT_BOUNDS.maxEvidenceReferences)
       .refine((values) => new Set(values).size === values.length, {
         message: "Evidence references must be unique.",
       }),
-    missingFields: z.array(missingFieldSchema).max(AGENT_BOUNDS.maxMissingFields),
+    missingFields: z.array(modelMissingFieldSchema).max(AGENT_BOUNDS.maxMissingFields),
     failure: groundingFailureSchema.nullable(),
   })
   .strict()
@@ -244,11 +262,18 @@ export const agentModelOutputSchema = z
         message: "Grounded output cannot include a failure.",
       });
     }
-    if (output.status === "grounded" && output.propertyIds.length === 0) {
+    if (output.status === "grounded" && output.propertyRefs.length === 0) {
       context.addIssue({
         code: "custom",
-        path: ["propertyIds"],
+        path: ["propertyRefs"],
         message: "Grounded output requires at least one retrieved property.",
+      });
+    }
+    if (output.status === "grounded" && output.evidenceRefs.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidenceRefs"],
+        message: "Grounded output requires validated Oracle evidence.",
       });
     }
     if (output.status === "cannot_ground" && output.failure === null) {
@@ -261,9 +286,11 @@ export const agentModelOutputSchema = z
   });
 
 export const getPropertyArgumentsSchema = z
-  .object({ propertyId: propertyIdSchema })
+  .object({ propertyRef: propertyReferenceSchema })
   .strict();
-export const getPermitArgumentsSchema = z.object({ permitId: permitIdSchema }).strict();
+export const getPermitArgumentsSchema = z
+  .object({ permitRef: permitReferenceSchema })
+  .strict();
 export const getQuerySchemaArgumentsSchema = z.object({}).strict();
 
 export type NaturalLanguageQueryRequest = z.infer<
@@ -274,3 +301,4 @@ export type AgentSearchArguments = z.infer<typeof agentSearchArgumentsSchema>;
 export type AgentModelSearchArguments = z.infer<typeof agentModelSearchArgumentsSchema>;
 export type AgentFailureCode = z.infer<typeof groundingFailureSchema>["code"];
 export type MissingField = z.infer<typeof missingFieldSchema>;
+export type ModelMissingField = z.infer<typeof modelMissingFieldSchema>;

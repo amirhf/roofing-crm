@@ -4,7 +4,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
-import type { OracleCallOptions, OracleMcpToolName, OracleMcpTransport } from "./types";
+import type {
+  OracleCallOptions,
+  OracleMcpToolDescriptor,
+  OracleMcpToolName,
+  OracleMcpTransport,
+} from "./types";
 
 export const MAX_ORACLE_MCP_HTTP_RESPONSE_BYTES = 131_072;
 export const MAX_ORACLE_MCP_CLOSE_MS = 1_000;
@@ -167,7 +172,9 @@ export class StreamableHttpOracleMcpTransport implements OracleMcpTransport {
     );
   }
 
-  async listToolNames(options?: OracleCallOptions): Promise<readonly string[]> {
+  async listTools(
+    options?: OracleCallOptions,
+  ): Promise<readonly OracleMcpToolDescriptor[]> {
     return this.withConnectedClient(
       "tool discovery failed",
       options,
@@ -176,9 +183,20 @@ export class StreamableHttpOracleMcpTransport implements OracleMcpTransport {
           undefined,
           this.requestOptions(effectiveOptions),
         );
-        return response.tools.map((tool) => tool.name);
+        return response.tools.map((tool) => ({
+          name: tool.name,
+          inputSchema: tool.inputSchema as Readonly<Record<string, unknown>>,
+          outputSchema:
+            tool.outputSchema && typeof tool.outputSchema === "object"
+              ? (tool.outputSchema as Readonly<Record<string, unknown>>)
+              : null,
+        }));
       },
     );
+  }
+
+  async listToolNames(options?: OracleCallOptions): Promise<readonly string[]> {
+    return (await this.listTools(options)).map((tool) => tool.name);
   }
 
   private requestOptions(options?: OracleCallOptions) {

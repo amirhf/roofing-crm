@@ -279,9 +279,19 @@ export interface OracleMcpTransport {
     input: Readonly<Record<string, unknown>>,
     options?: OracleCallOptions,
   ): Promise<unknown>;
+  listTools?(options?: OracleCallOptions): Promise<readonly OracleMcpToolDescriptor[]>;
+}
+
+export interface OracleMcpToolDescriptor {
+  readonly name: string;
+  readonly inputSchema: Readonly<Record<string, unknown>>;
+  readonly outputSchema: Readonly<Record<string, unknown>> | null;
 }
 
 export interface OracleClient {
+  discoverTools?(
+    options?: OracleCallOptions,
+  ): Promise<readonly OracleMcpToolDescriptor[]>;
   getServiceInfo(options?: OracleCallOptions): Promise<OracleResult<JsonObject>>;
   getPipelineRunSummary(
     input?: JsonObject,

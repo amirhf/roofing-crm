@@ -51,3 +51,10 @@ export class AgentIntentValidationError extends Error {
     this.name = "AgentIntentValidationError";
   }
 }
+
+export class AgentReferenceError extends Error {
+  constructor() {
+    super("The model supplied an unknown or invalid request-scoped reference.");
+    this.name = "AgentReferenceError";
+  }
+}

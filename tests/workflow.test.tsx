@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import searchFixture from "../contracts/fixtures/search-response.json";
 import permitFixture from "../contracts/fixtures/permit-response.json";
 import { RoofingCrm } from "../src/components/roofing-crm";
+import type { PublicationReadiness } from "../src/components/publication-disclosure";
 import type {
   OracleResult,
   RoofingOpportunity,
@@ -71,6 +72,34 @@ function twoOpportunityResult(): OracleResult<SearchResultData> {
   };
 }
 
+function readiness(
+  permits: PublicationReadiness["publication"]["permits"] = "available",
+): PublicationReadiness {
+  return {
+    ready: true,
+    contractVersion: "1.2.0",
+    publication: {
+      label: "Candidate-owned validated sample",
+      recordCount: 25,
+      authoritativeComplete: false,
+      publicationStatus: "dry_run_validated",
+      datasetFreshness: "2026-08-28T00:00:00Z",
+      coordinatesAvailable: 24,
+      coordinatesUnavailable: 1,
+      roofSignalsDirect: 0,
+      roofSignalsProxy: 25,
+      permits,
+      contractors: "unavailable",
+    },
+  };
+}
+
+function renderCrm(
+  permits: PublicationReadiness["publication"]["permits"] = "available",
+) {
+  return render(<RoofingCrm initialOracleReadiness={readiness(permits)} />);
+}
+
 describe("primary workflow components", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
@@ -79,6 +108,35 @@ describe("primary workflow components", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it("allows a user-driven readiness recheck after a transient failure", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ready: false,
+            error: { code: "oracle_unavailable", message: "Unavailable" },
+          }),
+          { status: 503, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(readiness("unavailable")), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    render(<RoofingCrm />);
+    expect(await screen.findByText("Oracle publication is unavailable.")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "Check Oracle readiness again" }),
+    );
+
+    expect(await screen.findByText("Candidate-owned validated sample")).toBeVisible();
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("sends typed center and filter inputs and synchronizes map, list, and detail selection", async () => {
@@ -91,7 +149,15 @@ describe("primary workflow components", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    render(<RoofingCrm />);
+    renderCrm();
+
+    expect(screen.getByText("Candidate-owned validated sample")).toBeInTheDocument();
+    expect(
+      screen.getByText(/25 records · not authoritative-complete Pasco coverage/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Roof signal basis: 25 proxy \/ 0 direct/),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Place test pin" }));
     const radius = screen.getByRole("spinbutton", { name: "Radius miles" });
@@ -141,6 +207,44 @@ describe("primary workflow components", () => {
     );
   });
 
+  it("sends the current Explore center and radius to Query as server-held execution context", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: "not_configured",
+          message: "Model is unavailable for this component test.",
+        }),
+        { status: 503, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    renderCrm();
+
+    await user.click(screen.getByRole("button", { name: "Place test pin" }));
+    const radius = screen.getByRole("spinbutton", { name: "Radius miles" });
+    await user.clear(radius);
+    await user.type(radius, "12");
+    await user.click(screen.getByRole("button", { name: /Query$/ }));
+    await user.type(
+      screen.getByLabelText("Natural-language request"),
+      "Find roofs at least 20 years old.",
+    );
+    await user.click(screen.getByRole("button", { name: "Run grounded query" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({
+      searchContext: {
+        county: "pasco",
+        center: { kind: "coordinates", latitude: 28.5, longitude: -82.5 },
+        radius: { value: 12, unit: "mi" },
+      },
+    });
+  });
+
   it("enables permit duration only after Oracle records prove permit coverage", async () => {
     const user = userEvent.setup();
     vi.mocked(fetch).mockResolvedValue(
@@ -149,7 +253,7 @@ describe("primary workflow components", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    render(<RoofingCrm />);
+    renderCrm();
 
     const permitFilter = screen.getByRole("checkbox", {
       name: "Require an open roofing permit",
@@ -204,7 +308,7 @@ describe("primary workflow components", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    render(<RoofingCrm />);
+    renderCrm("unavailable");
 
     await user.click(screen.getByRole("button", { name: "Search opportunities" }));
     expect(
@@ -251,7 +355,7 @@ describe("primary workflow components", () => {
         }),
       );
 
-    render(<RoofingCrm />);
+    renderCrm();
     await user.click(screen.getByRole("button", { name: "Search opportunities" }));
     await user.click(screen.getByRole("button", { name: "Load next 10 results" }));
 
@@ -308,7 +412,7 @@ describe("primary workflow components", () => {
         }),
       );
 
-    render(<RoofingCrm />);
+    renderCrm();
     await user.click(screen.getByRole("button", { name: "Search opportunities" }));
     await user.click(screen.getByRole("button", { name: "Load next 10 results" }));
     expect(screen.getByRole("button", { name: "Loading next page…" })).toBeDisabled();
@@ -354,7 +458,7 @@ describe("primary workflow components", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    render(<RoofingCrm />);
+    renderCrm();
     await user.click(screen.getByRole("button", { name: "Search opportunities" }));
     expect(await screen.findByText("Partial data")).toBeInTheDocument();
     expect(
@@ -407,7 +511,7 @@ describe("primary workflow components", () => {
       }),
     );
 
-    render(<RoofingCrm />);
+    renderCrm();
     await user.click(screen.getByRole("button", { name: "Search opportunities" }));
     expect(await screen.findByText("Open state")).toBeInTheDocument();
     expect(screen.getByText("Roofing relevance")).toBeInTheDocument();
@@ -432,7 +536,7 @@ describe("primary workflow components", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    render(<RoofingCrm />);
+    renderCrm();
     await user.click(screen.getByRole("button", { name: "Search opportunities" }));
     expect(await screen.findByText(heading)).toBeInTheDocument();
   });

@@ -18,6 +18,7 @@ import { AgentMcpError } from "../src/agent/errors";
 import { GET as getLead, PATCH as patchLead } from "../src/app/api/leads/[leadId]/route";
 import { GET as listLeads, POST as postLead } from "../src/app/api/leads/route";
 import { POST as search } from "../src/app/api/search/route";
+import { GET as oracleHealth } from "../src/app/api/oracle/health/route";
 import {
   maxDuration as queryMaxDuration,
   POST as query,
@@ -26,6 +27,10 @@ import { resetLeadRepositoryForTests } from "../src/crm/repository-factory";
 import { AgentConfigurationError } from "../src/config/agent";
 import { loadApplicationRuntimeConfig } from "../src/config/runtime";
 import { DevelopmentFixtureOracleClient } from "../src/oracle/fixture-adapter";
+import {
+  OracleReadinessError,
+  resetOracleReadinessForTests,
+} from "../src/oracle/readiness";
 import {
   OracleMcpResponseSizeError,
   OracleMcpTransportError,
@@ -41,6 +46,15 @@ const createInput = {
   propertyId: "prop_e72ba795455c19d71ce4cb11f6177a5e",
   permitId: null,
 };
+const propertyRef = `property_ref_${"p".repeat(20)}0000` as const;
+const evidenceRef = `evidence_ref_${"e".repeat(20)}0001` as const;
+
+function deterministicReferenceToken(
+  kind: "property" | "permit" | "evidence",
+  ordinal: number,
+) {
+  return `${kind[0]!.repeat(20)}${String(ordinal).padStart(4, "0")}`;
+}
 
 function reportedSearchArguments(input: AgentSearchArguments): AgentModelSearchArguments {
   return {
@@ -145,11 +159,64 @@ describe("server APIs", () => {
     vi.stubEnv("LEAD_REPOSITORY", "memory");
     vi.stubEnv("SESSION_SECRET", "0123456789abcdef0123456789abcdef");
     resetLeadRepositoryForTests();
+    resetOracleReadinessForTests();
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     resetLeadRepositoryForTests();
+    resetOracleReadinessForTests();
+  });
+
+  it("reports sanitized Oracle readiness and dynamic publication limits", async () => {
+    const response = await oracleHealth();
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ready: true,
+      contractVersion: "1.2.0",
+      schemaHash: "9fc112ef8a4e2120593c3dc20c90073b0eb96596817c96112f63fd258bb7c131",
+      publication: {
+        label: "Candidate-owned validated sample",
+        recordCount: 25,
+        authoritativeComplete: false,
+        roofSignalsDirect: 0,
+        roofSignalsProxy: 25,
+        permits: "unavailable",
+        contractors: "unavailable",
+      },
+    });
+  });
+
+  it("blocks Query before model invocation when Oracle readiness fails", async () => {
+    const runAgent = vi.fn();
+    const recordError = vi.fn();
+    const handler = createQueryPostHandler({
+      loadConfig: configuredTestRuntime,
+      createModel: () => ({
+        provider: "mock",
+        modelId: "test/mock",
+        model: new MockLanguageModelV4(),
+      }),
+      createOracle: () => new DevelopmentFixtureOracleClient("test"),
+      ensureReadiness: async () => {
+        throw new OracleReadinessError("tool_order");
+      },
+      runAgent,
+      recordError,
+    });
+
+    const response = await handler(request("/api/query", "POST", queryInput));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "mcp_error" },
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorClass: "OracleReadinessError",
+        initializationStage: "tool_order",
+      }),
+    );
   });
 
   it("accepts a contract-valid fixture search and rejects invalid inputs", async () => {
@@ -231,8 +298,8 @@ describe("server APIs", () => {
               text: JSON.stringify({
                 status: "grounded",
                 filters: modelInput,
-                propertyIds: [property.propertyId],
-                evidenceRefs: [property.evidence[0]!.evidenceId],
+                propertyRefs: [propertyRef],
+                evidenceRefs: [evidenceRef],
                 missingFields: [],
                 failure: null,
               }),
@@ -245,12 +312,15 @@ describe("server APIs", () => {
       ],
     });
     const release = vi.fn();
+    const recordSuccess = vi.fn();
     const config = configuredTestRuntime();
     const handler = createQueryPostHandler({
       loadConfig: () => config,
       createModel: () => ({ provider: "mock", modelId: "test/mock", model }),
       createOracle: () => new DevelopmentFixtureOracleClient("test"),
       acquireSession: () => release,
+      referenceTokenSource: deterministicReferenceToken,
+      recordSuccess,
     });
 
     const response = await handler(request("/api/query", "POST", queryInput));
@@ -259,8 +329,13 @@ describe("server APIs", () => {
       status: "complete",
       grounded: {
         status: "grounded",
-        propertyIds: [property.propertyId],
-        properties: [{ propertyId: property.propertyId }],
+        propertyRefs: [propertyRef],
+        properties: [{ propertyRef }],
+      },
+      metadata: {
+        requestedProvider: "mock",
+        requestedModel: "test/mock",
+        sdkRetryCount: 0,
       },
     });
     expect(model.doGenerateCalls).toHaveLength(2);
@@ -275,6 +350,26 @@ describe("server APIs", () => {
     expect(attribution).not.toContain(queryInput.query);
     expect(attribution).not.toContain("Pasco County, Florida");
     expect(release).toHaveBeenCalledOnce();
+    expect(recordSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "grounded_property_query",
+        sessionIdHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        requestedProvider: "mock",
+        requestedModel: "test/mock",
+        modelGenerations: 2,
+        sdkAttemptCount: 2,
+        sdkRetryCount: 0,
+        providerAttemptCount: null,
+        oracleToolCallCount: 1,
+        completion: "grounded",
+        tags: ["feature:grounded-property-query", "env:test"],
+      }),
+    );
+    const successTelemetry = JSON.stringify(recordSuccess.mock.calls);
+    expect(successTelemetry).not.toContain(queryInput.query);
+    expect(successTelemetry).not.toContain(property.propertyId);
+    expect(successTelemetry).not.toContain(property.evidence[0]!.evidenceId);
+    expect(successTelemetry).not.toContain("Pasco County, Florida");
   });
 
   it("uses the validated Oracle timeout inside a larger bounded Query budget", async () => {
@@ -333,7 +428,6 @@ describe("server APIs", () => {
         page: { limit: 3, continuation: false },
       };
       const modelInput = reportedSearchArguments(oraclePlan);
-      const property = searchResponse.result.data.opportunities[0]!.property;
       const usage = {
         inputTokens: {
           total: 1,
@@ -365,8 +459,8 @@ describe("server APIs", () => {
                 text: JSON.stringify({
                   status: "grounded",
                   filters: modelInput,
-                  propertyIds: [property.propertyId],
-                  evidenceRefs: [property.evidence[0]!.evidenceId],
+                  propertyRefs: [propertyRef],
+                  evidenceRefs: [evidenceRef],
                   missingFields: [],
                   failure: null,
                 }),
@@ -384,6 +478,7 @@ describe("server APIs", () => {
         loadConfig: configuredTestRuntime,
         createModel: () => ({ provider: "mock", modelId: "test/mock", model }),
         createOracle: () => oracle,
+        referenceTokenSource: deterministicReferenceToken,
       });
 
       const response = await handler(
@@ -393,7 +488,7 @@ describe("server APIs", () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({
         status: "complete",
-        grounded: { status: "grounded", propertyIds: [property.propertyId] },
+        grounded: { status: "grounded", propertyRefs: [propertyRef] },
       });
       expect(model.doGenerateCalls).toHaveLength(2);
       expect(searchOracle).toHaveBeenCalledOnce();
@@ -484,6 +579,58 @@ describe("server APIs", () => {
     expect(recordError).toHaveBeenCalledWith(
       expect.objectContaining({ errorClass: "AgentIntentValidationError" }),
     );
+  });
+
+  it.each([
+    ["missing context", { query: queryInput.query }],
+    [
+      "out-of-range center",
+      {
+        ...queryInput,
+        searchContext: {
+          ...queryInput.searchContext,
+          center: { kind: "coordinates", latitude: 91, longitude: -82.4 },
+        },
+      },
+    ],
+    [
+      "excessive radius",
+      {
+        ...queryInput,
+        searchContext: {
+          ...queryInput.searchContext,
+          radius: { value: 51, unit: "mi" },
+        },
+      },
+    ],
+    [
+      "non-numeric center",
+      {
+        ...queryInput,
+        searchContext: {
+          ...queryInput.searchContext,
+          center: { kind: "coordinates", latitude: null, longitude: -82.4 },
+        },
+      },
+    ],
+  ])("rejects %s before model or Oracle invocation", async (_name, payload) => {
+    const model = new MockLanguageModelV4();
+    const createOracle = vi.fn(() => new DevelopmentFixtureOracleClient("test"));
+    const handler = createQueryPostHandler({
+      loadConfig: configuredTestRuntime,
+      createModel: () => ({ provider: "mock", modelId: "test/mock", model }),
+      createOracle,
+    });
+
+    const response = await handler(request("/api/query", "POST", payload));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "error",
+      error: { code: "invalid_request" },
+    });
+    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(createOracle).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -8,6 +8,11 @@ import type { OracleResult, SearchArguments, SearchResultData } from "@/oracle/t
 import { LeadWorkspace } from "./lead-workspace";
 import type { MapPoint } from "./opportunity-map";
 import { PropertyDetails } from "./property-details";
+import {
+  PublicationDisclosure,
+  type PublicationReadiness,
+  type PublicationState,
+} from "./publication-disclosure";
 import { QueryPanel } from "./query-panel";
 
 const OpportunityMap = dynamic(() => import("./opportunity-map"), {
@@ -19,7 +24,25 @@ const PASCO_CENTER: MapPoint = { latitude: 28.3232, longitude: -82.4319 };
 
 type View = "explore" | "leads" | "query";
 type SearchState = "idle" | "loading" | "success" | "empty" | "invalid" | "error";
-type PermitCoverage = "available" | "unavailable" | "unknown";
+type PermitCoverage = "available" | "partial" | "unavailable" | "unknown";
+
+async function fetchPublicationReadiness(
+  signal: AbortSignal,
+): Promise<PublicationReadiness> {
+  const response = await fetch("/api/oracle/health", { signal });
+  const payload: unknown = await response.json();
+  if (
+    !response.ok ||
+    typeof payload !== "object" ||
+    payload === null ||
+    !("ready" in payload) ||
+    payload.ready !== true ||
+    !("publication" in payload)
+  ) {
+    throw new Error("Oracle readiness unavailable.");
+  }
+  return payload as PublicationReadiness;
+}
 
 function RoofMark() {
   return (
@@ -103,7 +126,9 @@ function Navigation({
   );
 }
 
-export function RoofingCrm() {
+export function RoofingCrm({
+  initialOracleReadiness,
+}: Readonly<{ initialOracleReadiness?: PublicationReadiness }>) {
   const [view, setView] = useState<View>("explore");
   const [center, setCenter] = useState<MapPoint>(PASCO_CENTER);
   const [latitude, setLatitude] = useState(String(PASCO_CENTER.latitude));
@@ -112,7 +137,14 @@ export function RoofingCrm() {
   const [roofAge, setRoofAge] = useState(15);
   const [openPermits, setOpenPermits] = useState(false);
   const [minOpenDays, setMinOpenDays] = useState(30);
-  const [permitCoverage, setPermitCoverage] = useState<PermitCoverage>("unknown");
+  const [permitCoverage, setPermitCoverage] = useState<PermitCoverage>(
+    initialOracleReadiness?.publication.permits ?? "unknown",
+  );
+  const [publicationState, setPublicationState] = useState<PublicationState>(
+    initialOracleReadiness
+      ? { status: "ready", readiness: initialOracleReadiness }
+      : { status: "checking" },
+  );
   const [locationMessage, setLocationMessage] = useState(
     "Click the map or enter coordinates to place the search pin.",
   );
@@ -131,15 +163,73 @@ export function RoofingCrm() {
   const detailsRef = useRef<HTMLElement>(null);
   const searchGenerationRef = useRef(0);
   const searchAbortRef = useRef<AbortController | null>(null);
+  const readinessAbortRef = useRef<AbortController | null>(null);
 
   useEffect(
     () => () => {
       searchGenerationRef.current += 1;
       searchAbortRef.current?.abort();
       searchAbortRef.current = null;
+      readinessAbortRef.current?.abort();
+      readinessAbortRef.current = null;
     },
     [],
   );
+
+  useEffect(() => {
+    if (initialOracleReadiness) {
+      return;
+    }
+    const controller = new AbortController();
+    readinessAbortRef.current = controller;
+    void fetchPublicationReadiness(controller.signal)
+      .then((readiness) => {
+        setPublicationState({ status: "ready", readiness });
+        setPermitCoverage(readiness.publication.permits);
+        if (readiness.publication.permits === "unavailable") {
+          setOpenPermits(false);
+        }
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setPublicationState({ status: "unavailable" });
+        setPermitCoverage("unavailable");
+        setOpenPermits(false);
+      })
+      .finally(() => {
+        if (readinessAbortRef.current === controller) {
+          readinessAbortRef.current = null;
+        }
+      });
+    return () => {
+      controller.abort();
+      if (readinessAbortRef.current === controller) {
+        readinessAbortRef.current = null;
+      }
+    };
+  }, [initialOracleReadiness]);
+
+  async function retryOracleReadiness() {
+    readinessAbortRef.current?.abort();
+    const controller = new AbortController();
+    readinessAbortRef.current = controller;
+    setPublicationState({ status: "checking" });
+    try {
+      const readiness = await fetchPublicationReadiness(controller.signal);
+      setPublicationState({ status: "ready", readiness });
+      setPermitCoverage(readiness.publication.permits);
+      if (readiness.publication.permits === "unavailable") setOpenPermits(false);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setPublicationState({ status: "unavailable" });
+      setPermitCoverage("unavailable");
+      setOpenPermits(false);
+    } finally {
+      if (readinessAbortRef.current === controller) {
+        readinessAbortRef.current = null;
+      }
+    }
+  }
 
   const opportunities = useMemo(
     () => (result?.ok ? result.data.opportunities : []),
@@ -224,14 +314,16 @@ export function RoofingCrm() {
               permit: {
                 roofingOnly: true,
                 openOnly: true,
-                ...(permitCoverage === "available" ? { minOpenDays } : {}),
+                ...(permitCoverage === "available" || permitCoverage === "partial"
+                  ? { minOpenDays }
+                  : {}),
               },
             }
           : {}),
         matchMode: "all",
       },
       sort:
-        openPermits && permitCoverage === "available"
+        openPermits && (permitCoverage === "available" || permitCoverage === "partial")
           ? "permit_open_days_desc"
           : "distance_asc",
       page: { limit: 10 },
@@ -301,16 +393,6 @@ export function RoofingCrm() {
         ({ property }) => !seen.has(property.propertyId),
       );
       const combined = [...existing, ...additions];
-      if (combined.length > 0) {
-        setPermitCoverage(
-          combined.some(
-            ({ property }) =>
-              property.openRoofingPermitCount.availability === "available",
-          )
-            ? "available"
-            : "unavailable",
-        );
-      }
       setResult({
         ...oracleResult,
         data: { ...oracleResult.data, opportunities: combined },
@@ -352,6 +434,11 @@ export function RoofingCrm() {
 
   async function runSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (publicationState.status !== "ready") {
+      setSearchState("error");
+      setSearchMessage("Oracle readiness must pass before search can run.");
+      return;
+    }
     const input = buildSearchInput();
     const generation = searchGenerationRef.current + 1;
     searchGenerationRef.current = generation;
@@ -414,6 +501,10 @@ export function RoofingCrm() {
         <Navigation view={view} onView={setView} />
       </aside>
       <section className="main-panel" id="main-content">
+        <PublicationDisclosure
+          state={publicationState}
+          onRetry={() => void retryOracleReadiness()}
+        />
         {view === "explore" ? (
           <>
             <header className="topbar">
@@ -551,7 +642,11 @@ export function RoofingCrm() {
                         max={36500}
                         step={1}
                         value={minOpenDays}
-                        disabled={!openPermits || permitCoverage !== "available"}
+                        disabled={
+                          !openPermits ||
+                          permitCoverage === "unknown" ||
+                          permitCoverage === "unavailable"
+                        }
                         onChange={(event) => {
                           invalidateSearchResults();
                           setMinOpenDays(Number(event.target.value));
@@ -565,13 +660,19 @@ export function RoofingCrm() {
                       ? "Permit coverage is unavailable for the returned Oracle dataset. Permit-specific filters remain disabled."
                       : permitCoverage === "unknown"
                         ? "Permit coverage is not yet confirmed. Run the default search before applying permit-specific duration filters."
-                        : "Permit coverage is available for the returned Oracle records."}
+                        : permitCoverage === "partial"
+                          ? "Permit coverage is partial. Explicit permit filters apply only to covered records."
+                          : "Permit coverage is available for the returned Oracle records."}
                   </p>
                 </fieldset>
                 <button
                   className="primary-button search-button"
                   type="submit"
-                  disabled={searchState === "loading" || pagePending}
+                  disabled={
+                    publicationState.status !== "ready" ||
+                    searchState === "loading" ||
+                    pagePending
+                  }
                 >
                   {searchState === "loading"
                     ? "Searching Oracle…"
@@ -694,7 +795,15 @@ export function RoofingCrm() {
         ) : view === "leads" ? (
           <LeadWorkspace refreshKey={leadRefreshKey} />
         ) : (
-          <QueryPanel />
+          <QueryPanel
+            oracleReady={publicationState.status === "ready"}
+            searchContext={{
+              county: "pasco",
+              center: { kind: "coordinates", ...center },
+              radius: { value: radius, unit: "mi" },
+              filters: buildSearchInput().filters,
+            }}
+          />
         )}
       </section>
     </main>

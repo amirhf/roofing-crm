@@ -6,6 +6,7 @@ import {
   OracleMcpResponseSizeError,
   OracleMcpTransportError,
 } from "@/oracle/mcp-transport";
+import { OracleReadinessError } from "@/oracle/readiness";
 
 export type OracleSearchStatusCategory =
   | "contract_validation"
@@ -15,6 +16,7 @@ export type OracleSearchStatusCategory =
   | "mcp_transport"
   | "oracle_timeout"
   | "response_size"
+  | "readiness_validation"
   | "schema_hash_mismatch"
   | "unknown";
 
@@ -53,19 +55,20 @@ function statusCode(error: unknown): 502 | 503 | 504 | null {
 export function classifyOracleSearchError(
   error: unknown,
 ): OracleSearchErrorClassification {
-  if (error instanceof OracleMcpResponseSizeError) {
+  const chain = causes(error);
+  if (chain.some((entry) => entry instanceof OracleMcpResponseSizeError)) {
     return {
       errorClass: "OracleMcpResponseSizeError",
       statusCategory: "response_size",
     };
   }
-  if (error instanceof OracleSchemaHashMismatchError) {
+  if (chain.some((entry) => entry instanceof OracleSchemaHashMismatchError)) {
     return {
       errorClass: "OracleSchemaHashMismatchError",
       statusCategory: "schema_hash_mismatch",
     };
   }
-  if (error instanceof ContractValidationError) {
+  if (chain.some((entry) => entry instanceof ContractValidationError)) {
     return {
       errorClass: "ContractValidationError",
       statusCategory: "contract_validation",
@@ -79,17 +82,27 @@ export function classifyOracleSearchError(
     };
   }
   if (
-    causes(error).some((entry) => entry instanceof Error && entry.name === "TimeoutError")
+    chain.some(
+      (entry) =>
+        entry instanceof Error &&
+        (entry.name === "TimeoutError" || entry.name === "AbortError"),
+    )
   ) {
     return {
       errorClass: "OracleMcpTransportError",
       statusCategory: "oracle_timeout",
     };
   }
-  if (error instanceof OracleMcpTransportError) {
+  if (chain.some((entry) => entry instanceof OracleMcpTransportError)) {
     return {
       errorClass: "OracleMcpTransportError",
       statusCategory: "mcp_transport",
+    };
+  }
+  if (error instanceof OracleReadinessError) {
+    return {
+      errorClass: "OracleReadinessError",
+      statusCategory: "readiness_validation",
     };
   }
   return { errorClass: "UnknownError", statusCategory: "unknown" };
