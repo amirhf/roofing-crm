@@ -44,3 +44,9 @@ The UI should present property and permit details, including contractor informat
 ## Reference
 - [Soofi XYZ Team Kit](https://github.com/soofi-xyz/soofi-xyz-team-kit)
 - [Elephant Oracle Skills](https://github.com/elephant-xyz/skills)
+
+## Operations
+
+See the [CRM operations runbook](docs/operations-runbook.md) for deterministic
+verification, environment-variable names, deployment checks, incident triage,
+and rollback guidance.
