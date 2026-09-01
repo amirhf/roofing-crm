@@ -20,6 +20,30 @@ const HIGH_RISK_VALUE_PATTERNS = [
 const UNSUPPORTED_STORAGE_PATTERN =
   /\b(?:sql|postgres(?:ql)?|neon|duckdb|filebase|ipfs|ipns|filesystem|database|storage|source\s+file)\b/i;
 
+const RESULT_LIMIT_WORDS: Readonly<Record<string, number>> = Object.freeze({
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+});
+
+const RESULT_UNITS = [
+  "result",
+  "results",
+  "property",
+  "properties",
+  "home",
+  "homes",
+  "opportunity",
+  "opportunities",
+] as const;
+
 const SAFE_TERMS: Readonly<Record<string, string | null>> = Object.freeze({
   a: null,
   actual: "actual_basis",
@@ -225,10 +249,18 @@ function normalizeIntent(query: string): PrivacySafeModelContext["intent"] {
   const measurements: PrivacySafeModelContext["intent"]["measurements"][number][] = [];
 
   tokens.forEach((token, index) => {
-    if (!/^\d+(?:\.\d+)?$/.test(token)) return;
-    const value = Number(token);
-    const unit = tokens[index + 1];
+    const numericToken = /^\d+(?:\.\d+)?$/.test(token);
+    const wordValue = RESULT_LIMIT_WORDS[token];
+    if (!numericToken && wordValue === undefined) return;
+    const value = wordValue ?? Number(token);
+    const interveningSort = ["nearest", "closest"].includes(tokens[index + 1] ?? "");
+    const unitIndex = index + (interveningSort ? 2 : 1);
+    const unit = tokens[unitIndex];
     if (!Number.isFinite(value) || unit === undefined) {
+      throw new AgentIntentValidationError();
+    }
+    const resultUnit = (RESULT_UNITS as readonly string[]).includes(unit);
+    if ((wordValue !== undefined || interveningSort) && !resultUnit) {
       throw new AgentIntentValidationError();
     }
     if (["mile", "miles", "mi"].includes(unit)) {
@@ -239,24 +271,13 @@ function normalizeIntent(query: string): PrivacySafeModelContext["intent"] {
       measurements.push({ kind: "years", value, unit: "years" });
     } else if (["day", "days"].includes(unit)) {
       measurements.push({ kind: "days", value, unit: "days" });
-    } else if (
-      [
-        "result",
-        "results",
-        "property",
-        "properties",
-        "home",
-        "homes",
-        "opportunity",
-        "opportunities",
-      ].includes(unit)
-    ) {
+    } else if (resultUnit) {
       measurements.push({ kind: "result_limit", value, unit: "results" });
     } else {
       throw new AgentIntentValidationError();
     }
     consumedNumbers.add(index);
-    consumedUnits.add(index + 1);
+    consumedUnits.add(unitIndex);
   });
   if (measurements.length > 8) throw new AgentIntentValidationError();
 

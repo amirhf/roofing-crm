@@ -511,6 +511,96 @@ describe("server APIs", () => {
     },
   );
 
+  it("progresses the exact worded-limit live query beyond intent validation", async () => {
+    const liveQuery =
+      "Find the three nearest properties with roof age at least 15 years and explain the available evidence.";
+    const oraclePlan: AgentSearchArguments = {
+      radius: queryInput.searchContext.radius,
+      filters: {
+        roofAge: { operator: "gte", years: 15, basis: "direct_or_proxy" },
+      },
+      sort: "distance_asc",
+      page: { limit: 3, continuation: false },
+    };
+    const modelInput = reportedSearchArguments(oraclePlan);
+    const usage = {
+      inputTokens: {
+        total: 1,
+        noCache: 1,
+        cacheRead: undefined,
+        cacheWrite: undefined,
+      },
+      outputTokens: { total: 1, text: 1, reasoning: undefined },
+    };
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "worded-limit-search",
+              toolName: "prism_v1_search_roofing_opportunities",
+              input: JSON.stringify(modelInput),
+            },
+          ],
+          finishReason: { unified: "tool-calls", raw: undefined },
+          usage,
+          warnings: [],
+        },
+        {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                status: "grounded",
+                filters: modelInput,
+                propertyRefs: [propertyRef],
+                evidenceRefs: [evidenceRef],
+                missingFields: [],
+                failure: null,
+              }),
+            },
+          ],
+          finishReason: { unified: "stop", raw: undefined },
+          usage,
+          warnings: [],
+        },
+      ],
+    });
+    const oracle = new DevelopmentFixtureOracleClient("test");
+    const searchOracle = vi.spyOn(oracle, "searchRoofingOpportunities");
+    const handler = createQueryPostHandler({
+      loadConfig: configuredTestRuntime,
+      createModel: () => ({ provider: "mock", modelId: "test/mock", model }),
+      createOracle: () => oracle,
+      referenceTokenSource: deterministicReferenceToken,
+    });
+
+    const response = await handler(
+      request("/api/query", "POST", { ...queryInput, query: liveQuery }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "complete",
+      grounded: { status: "grounded", propertyRefs: [propertyRef] },
+    });
+    expect(model.doGenerateCalls).toHaveLength(2);
+    expect(searchOracle).toHaveBeenCalledOnce();
+    expect(searchOracle).toHaveBeenCalledWith(
+      {
+        county: "pasco",
+        center: queryInput.searchContext.center,
+        radius: queryInput.searchContext.radius,
+        filters: oraclePlan.filters,
+        sort: "distance_asc",
+        page: { limit: 3 },
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(JSON.stringify(model.doGenerateCalls)).not.toContain(liveQuery);
+  });
+
   it("rejects ambiguous sensitive query text without model, Oracle, or telemetry exposure", async () => {
     const sentinel = "AMBIGUOUS PRIVATE OWNER SENTINEL";
     const model = new MockLanguageModelV4();

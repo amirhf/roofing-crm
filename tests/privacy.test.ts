@@ -12,6 +12,8 @@ const boundedProductionRequest =
   "Find the nearest published Pasco roofing opportunities within 15 miles with roofs at least 15 years old. Explain the proxy basis and available permit coverage. Return at most 3 results.";
 const boundedSimpleRequest =
   "Find the nearest properties within 15 miles with roofs at least 15 years old. Return at most 3 results.";
+const liveSourceSnapshotRequest =
+  "Find the three nearest properties with roof age at least 15 years and explain the available evidence.";
 
 function request(query: string): NaturalLanguageQueryRequest {
   return {
@@ -105,4 +107,36 @@ describe("privacy-safe query canonicalization", () => {
       expect(JSON.stringify(context)).not.toContain(query);
     },
   );
+
+  it("canonicalizes the exact live source-snapshot query with a worded result limit", () => {
+    const context = createPrivacySafeModelContext(request(liveSourceSnapshotRequest));
+
+    expect(context.intent).toEqual({
+      kind: "roofing_opportunity_search",
+      terms: expect.arrayContaining([
+        "search",
+        "distance_sort",
+        "roof_age",
+        "minimum",
+        "explanation",
+        "data_availability",
+        "evidence",
+      ]),
+      measurements: [
+        { kind: "result_limit", value: 3, unit: "results" },
+        { kind: "years", value: 15, unit: "years" },
+      ],
+    });
+    expect(JSON.stringify(context)).not.toContain(liveSourceSnapshotRequest);
+    expect(JSON.stringify(context)).not.toContain("28.1234567");
+    expect(JSON.stringify(context)).not.toContain("-82.7654321");
+  });
+
+  it("does not generalize worded numbers beyond the bounded result-limit grammar", () => {
+    expect(() =>
+      createPrivacySafeModelContext(
+        request("Find roofs that are at least three years old."),
+      ),
+    ).toThrow();
+  });
 });

@@ -320,6 +320,7 @@ describe("grounded natural-language agent", () => {
     "Find properties within 8 miles of the selected center with roofs at least 18 years old and an open roofing permit for 45+ days.",
     "Find the nearest published Pasco roofing opportunities within 15 miles with roofs at least 15 years old. Explain the proxy basis and available permit coverage. Return at most 3 results.",
     "Find the nearest properties within 15 miles with roofs at least 15 years old. Return at most 3 results.",
+    "Find the three nearest properties with roof age at least 15 years and explain the available evidence.",
   ])("accepts canonical production-safe caller intent: %s", async (query) => {
     const base = fixtureOracle();
     const search = vi.fn((input: SearchArguments) =>
