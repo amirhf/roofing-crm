@@ -1,0 +1,31 @@
+name: Manual live Oracle MCP verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      oracle_mcp_url:
+        description: Public Oracle Streamable HTTP MCP endpoint
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  live-mcp:
+    name: Read-only MCP and browser checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ORACLE_DATA_SOURCE: mcp
+      ORACLE_MCP_URL: ${{ inputs.oracle_mcp_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:integration:mcp
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:real-mcp

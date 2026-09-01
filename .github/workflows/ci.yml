@@ -1,0 +1,97 @@
+name: CRM verification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - assessment/roofing-crm
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crm-verification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Format, lint, and typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+
+  unit-contract:
+    name: Unit and contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+
+  production-build:
+    name: Production build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+  postgres-migration:
+    name: Disposable PostgreSQL migration and replay
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Install PostgreSQL binaries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql postgresql-client
+          POSTGRES_BIN_DIR="$(find /usr/lib/postgresql -type f -name initdb -printf '%h\n' | sort -V | tail -n 1)"
+          test -x "$POSTGRES_BIN_DIR/initdb"
+          test -x "$POSTGRES_BIN_DIR/pg_ctl"
+          test -x "$POSTGRES_BIN_DIR/psql"
+          echo "POSTGRES_BIN_DIR=$POSTGRES_BIN_DIR" >> "$GITHUB_ENV"
+      - run: npm run test:integration:postgres-migration
+
+  fixture-browser:
+    name: Fixture-backed Chromium workflow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Retain failed browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixture-browser-diagnostics
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 7

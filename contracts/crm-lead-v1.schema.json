@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.prismteam.ai/roofing-crm/lead/v1/schema.json",
+  "title": "Prism Roofing CRM anonymous-session lead v1.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "leadId",
+    "sessionIdHash",
+    "oracleReferenceKey",
+    "oracleContractVersion",
+    "oracleContractHash",
+    "propertyId",
+    "permitId",
+    "sourcePublicationCid",
+    "sourceCapturedAt",
+    "status",
+    "notes",
+    "createdAt",
+    "updatedAt",
+    "sessionExpiresAt"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.1.0" },
+    "leadId": { "type": "string", "format": "uuid" },
+    "sessionIdHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "oracleReferenceKey": {
+      "type": "string",
+      "pattern": "^leadref_[a-f0-9]{32}$"
+    },
+    "oracleContractVersion": { "enum": ["1.0.0", "1.1.0", "1.2.0"] },
+    "oracleContractHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "propertyId": {
+      "type": "string",
+      "pattern": "^prop_[a-f0-9]{32}$"
+    },
+    "permitId": {
+      "type": ["string", "null"],
+      "pattern": "^perm_[a-f0-9]{32}$"
+    },
+    "sourcePublicationCid": { "type": ["string", "null"] },
+    "sourceCapturedAt": { "type": "string", "format": "date-time" },
+    "status": {
+      "enum": ["new", "qualified", "contacted", "won", "lost"]
+    },
+    "notes": { "type": "string", "maxLength": 10000 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "sessionExpiresAt": {
+      "description": "Mandatory cookie/session expiry; the approved duration is seven days from session creation.",
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "oracleContractVersion": { "const": "1.0.0" } },
+        "required": ["oracleContractVersion"]
+      },
+      "then": {
+        "properties": {
+          "oracleContractHash": {
+            "const": "714ee037ffca1362870a5135328a783bfe4a0161e7136e09d4d1590894211de7"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "oracleContractVersion": { "const": "1.1.0" } },
+        "required": ["oracleContractVersion"]
+      },
+      "then": {
+        "properties": {
+          "oracleContractHash": {
+            "const": "1ef6f43072bc93ee8557aa9fcd0ce55eab26560fe4d061fac7c9388b2d0301c5"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "oracleContractVersion": { "const": "1.2.0" } },
+        "required": ["oracleContractVersion"]
+      },
+      "then": {
+        "properties": {
+          "oracleContractHash": {
+            "const": "9fc112ef8a4e2120593c3dc20c90073b0eb96596817c96112f63fd258bb7c131"
+          }
+        }
+      }
+    }
+  ]
+}
