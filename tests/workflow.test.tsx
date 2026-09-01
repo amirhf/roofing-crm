@@ -79,15 +79,20 @@ function readiness(
     ready: true,
     contractVersion: "1.2.0",
     publication: {
-      label: "Candidate-owned validated sample",
-      recordCount: 25,
+      label: "Current candidate-owned source snapshot",
+      recordCount: 325_213,
       authoritativeComplete: false,
+      datasetVersion: "pasco-source-snapshot-1f98bdf9fa8269fd",
+      sourceSnapshot: true,
       publicationStatus: "dry_run_validated",
       datasetFreshness: "2026-08-28T00:00:00Z",
-      coordinatesAvailable: 24,
-      coordinatesUnavailable: 1,
+      datasetFreshnessBasis: "loaded_at",
+      publicationObjectCount: 325_312,
+      publicationTimestamp: null,
+      coordinatesAvailable: 24_995,
+      coordinatesUnavailable: 300_218,
       roofSignalsDirect: 0,
-      roofSignalsProxy: 25,
+      roofSignalsProxy: 261_590,
       permits,
       contractors: "unavailable",
     },
@@ -135,7 +140,9 @@ describe("primary workflow components", () => {
       screen.getByRole("button", { name: "Check Oracle readiness again" }),
     );
 
-    expect(await screen.findByText("Candidate-owned validated sample")).toBeVisible();
+    expect(
+      await screen.findByText("Current candidate-owned source snapshot"),
+    ).toBeVisible();
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -151,13 +158,21 @@ describe("primary workflow components", () => {
     );
     renderCrm();
 
-    expect(screen.getByText("Candidate-owned validated sample")).toBeInTheDocument();
     expect(
-      screen.getByText(/25 records · not authoritative-complete Pasco coverage/),
+      screen.getByText("Current candidate-owned source snapshot"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Roof signal basis: 25 proxy \/ 0 direct/),
+      screen.getByText(
+        /325,213 properties · 24,995 mapped coordinates · 300,218 without coordinates/,
+      ),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Roof signal basis: 261,590 proxy \/ 0 direct · proxy is not actual roof age/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("325,312 publication objects")).toBeInTheDocument();
+    expect(screen.getByText("Publication timestamp unavailable")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Place test pin" }));
     const radius = screen.getByRole("spinbutton", { name: "Radius miles" });

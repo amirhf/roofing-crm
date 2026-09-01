@@ -28,9 +28,77 @@ describe("Oracle readiness", () => {
       publication: {
         recordCount: 25,
         authoritativeComplete: false,
+        datasetVersion: "fixture-dataset-2026-08-28",
+        sourceSnapshot: false,
+        publicationObjectCount: 34,
+        publicationTimestamp: null,
         roofSignalsProxy: 25,
         permits: "unavailable",
         contractors: "unavailable",
+      },
+    });
+  });
+
+  it("projects validated source-snapshot metadata without promoting the artifact status", async () => {
+    const config = loadOracleRuntimeConfig({
+      NODE_ENV: "test",
+      ORACLE_DATA_SOURCE: "fixtures",
+    });
+    const base = createOracleClient(config);
+    const service = await base.getServiceInfo();
+    const pipeline = await base.getPipelineRunSummary();
+    if (!service.ok || !pipeline.ok || !base.discoverTools) {
+      throw new Error("Expected fixture-backed Oracle metadata.");
+    }
+
+    const sourceSnapshotVersion = "pasco-source-snapshot-1f98bdf9fa8269fd";
+    const serviceData = service.data as Record<string, unknown>;
+    const dataset = serviceData.dataset as Record<string, unknown>;
+    dataset.version = sourceSnapshotVersion;
+    const coverage = pipeline.data.coverage as Record<string, Record<string, unknown>>;
+    Object.assign(coverage.properties!, { available: 325_213, unavailable: 0 });
+    Object.assign(coverage.coordinates!, {
+      available: 24_995,
+      unavailable: 300_218,
+    });
+    Object.assign(coverage.roofSignals!, {
+      available: 261_590,
+      unavailable: 63_623,
+      direct: 0,
+      proxy: 261_590,
+    });
+    const publicationArtifacts = pipeline.data.publicationArtifacts as Record<
+      string,
+      unknown
+    >;
+    Object.assign(publicationArtifacts, {
+      datasetVersion: sourceSnapshotVersion,
+      artifactCount: 325_312,
+      publishedAt: null,
+      artifactCids: ["QmSyntheticOpenDataRoot", "QmSyntheticQueryTableRoot"],
+    });
+
+    const client: OracleClient = {
+      discoverTools: base.discoverTools.bind(base),
+      getServiceInfo: async () => service,
+      getPipelineRunSummary: async () => pipeline,
+      searchRoofingOpportunities: base.searchRoofingOpportunities.bind(base),
+      getProperty: base.getProperty.bind(base),
+      getPermit: base.getPermit.bind(base),
+      getQuerySchema: base.getQuerySchema.bind(base),
+    };
+
+    await expect(ensureOracleReadiness(config, client)).resolves.toMatchObject({
+      publication: {
+        label: "Current candidate-owned source snapshot",
+        recordCount: 325_213,
+        sourceSnapshot: true,
+        publicationStatus: "dry_run_validated",
+        publicationObjectCount: 325_312,
+        publicationTimestamp: null,
+        coordinatesAvailable: 24_995,
+        coordinatesUnavailable: 300_218,
+        roofSignalsProxy: 261_590,
       },
     });
   });

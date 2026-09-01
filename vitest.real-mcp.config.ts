@@ -14,7 +14,7 @@ export default defineConfig({
     include: ["tests/integration/**/*.integration.ts"],
     restoreMocks: true,
     setupFiles: ["./tests/setup.ts"],
-    testTimeout: 30_000,
-    hookTimeout: 10_000,
+    testTimeout: 65_000,
+    hookTimeout: 35_000,
   },
 });

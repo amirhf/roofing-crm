@@ -5,8 +5,13 @@ export interface PublicationReadiness {
     label: string;
     recordCount: number;
     authoritativeComplete: false;
+    datasetVersion: string;
+    sourceSnapshot: boolean;
     publicationStatus: string;
     datasetFreshness: string;
+    datasetFreshnessBasis: "published_at" | "loaded_at";
+    publicationObjectCount: number | null;
+    publicationTimestamp: string | null;
     coordinatesAvailable: number;
     coordinatesUnavailable: number;
     roofSignalsDirect: number;
@@ -54,24 +59,44 @@ export function PublicationDisclosure({
   }
 
   const { publication } = state.readiness;
+  const contractorCoverage = coverageLabel(publication.contractors);
   return (
     <aside className="publication-disclosure" aria-label="Oracle publication limits">
       <strong>{publication.label}</strong>
       <span>
-        {publication.recordCount.toLocaleString()} records · not authoritative-complete
-        Pasco coverage
+        {publication.recordCount.toLocaleString()} properties ·{` `}
+        {publication.coordinatesAvailable.toLocaleString()} mapped coordinates ·{` `}
+        {publication.coordinatesUnavailable.toLocaleString()} without coordinates
+      </span>
+      {publication.publicationObjectCount === null ? null : (
+        <span>
+          {publication.publicationObjectCount.toLocaleString()} publication objects
+        </span>
+      )}
+      <span>
+        Candidate-owned, noncanonical, and not independently Pasco-certified; not
+        authoritative-complete coverage
       </span>
       <span>
         Roof signal basis: {publication.roofSignalsProxy.toLocaleString()} proxy /{` `}
-        {publication.roofSignalsDirect.toLocaleString()} direct
+        {publication.roofSignalsDirect.toLocaleString()} direct · proxy is not actual roof
+        age
       </span>
       <span>
-        Permits {coverageLabel(publication.permits)} · contractors{" "}
-        {coverageLabel(publication.contractors)}
+        Permits {coverageLabel(publication.permits)} · contractors {contractorCoverage}
+        {publication.contractors === "unavailable" ? " · BBB unavailable" : ""}
       </span>
       <span>
-        Validated MCP {state.readiness.contractVersion} · freshness{" "}
+        Validated MCP {state.readiness.contractVersion} ·{" "}
+        {publication.datasetFreshnessBasis === "loaded_at"
+          ? "source loaded"
+          : "dataset published"}{" "}
         {new Date(publication.datasetFreshness).toLocaleDateString()}
+      </span>
+      <span>
+        {publication.publicationTimestamp === null
+          ? "Publication timestamp unavailable"
+          : `Publication timestamp ${new Date(publication.publicationTimestamp).toLocaleDateString()}`}
       </span>
     </aside>
   );

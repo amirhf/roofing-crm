@@ -11,7 +11,10 @@ import type {
   OracleMcpTransport,
 } from "./types";
 
-export const MAX_ORACLE_MCP_HTTP_RESPONSE_BYTES = 131_072;
+// A validated ten-result source-snapshot search measured 199,922 bytes over
+// Streamable HTTP. Keep the next binary boundary while preserving byte-level
+// enforcement for larger responses.
+export const MAX_ORACLE_MCP_HTTP_RESPONSE_BYTES = 262_144;
 export const MAX_ORACLE_MCP_CLOSE_MS = 1_000;
 
 export class OracleMcpTransportError extends Error {

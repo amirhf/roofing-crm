@@ -31,9 +31,14 @@ export interface OracleReadinessSnapshot {
     label: string;
     recordCount: number;
     authoritativeComplete: false;
+    datasetVersion: string;
+    sourceSnapshot: boolean;
     publicationStatus:
       "not_generated" | "dry_run_validated" | "published" | "unavailable";
     datasetFreshness: string;
+    datasetFreshnessBasis: "published_at" | "loaded_at";
+    publicationObjectCount: number | null;
+    publicationTimestamp: string | null;
     coordinatesAvailable: number;
     coordinatesUnavailable: number;
     roofSignalsDirect: number;
@@ -353,9 +358,15 @@ function publicationStatus(
   throw new OracleReadinessError();
 }
 
+function isSourceSnapshotVersion(datasetVersion: string): boolean {
+  return /^pasco-source-snapshot-[a-f0-9]+$/.test(datasetVersion);
+}
+
 function publicationLabel(
   status: OracleReadinessSnapshot["publication"]["publicationStatus"],
+  sourceSnapshot: boolean,
 ): string {
+  if (sourceSnapshot) return "Current candidate-owned source snapshot";
   return status === "published"
     ? "Candidate-owned published dataset"
     : status === "dry_run_validated"
@@ -408,12 +419,13 @@ async function probeReadiness(
   const contractors = requireRecord(coverage, "contractors");
   const publicationArtifacts = requireRecord(pipeline, "publicationArtifacts");
   const status = publicationStatus(publicationArtifacts.status);
-  const datasetFreshness =
-    typeof freshness.publishedAt === "string"
-      ? freshness.publishedAt
-      : typeof freshness.loadedAt === "string"
-        ? freshness.loadedAt
-        : null;
+  const publishedFreshness =
+    typeof freshness.publishedAt === "string" ? freshness.publishedAt : null;
+  const loadedFreshness =
+    typeof freshness.loadedAt === "string" ? freshness.loadedAt : null;
+  const datasetFreshnessBasis =
+    publishedFreshness === null ? "loaded_at" : "published_at";
+  const datasetFreshness = publishedFreshness ?? loadedFreshness;
   const propertyCount = requireNonnegativeInteger(properties.available);
   const propertyUnavailable = requireNonnegativeInteger(properties.unavailable);
   const coordinateAvailable = requireNonnegativeInteger(coordinates.available);
@@ -423,11 +435,23 @@ async function probeReadiness(
   const roofDirect = requireNonnegativeInteger(roofSignals.direct);
   const roofProxy = requireNonnegativeInteger(roofSignals.proxy);
   const datasetVersion = dataset.version;
+  const publicationObjectCount =
+    publicationArtifacts.artifactCount === null
+      ? null
+      : requireNonnegativeInteger(publicationArtifacts.artifactCount);
+  const publicationTimestamp =
+    publicationArtifacts.publishedAt === null ||
+    typeof publicationArtifacts.publishedAt === "string"
+      ? publicationArtifacts.publishedAt
+      : undefined;
+  const artifactRoots = stringArray(publicationArtifacts.artifactCids);
   if (
     datasetFreshness === null ||
     (status !== "published" && status !== "dry_run_validated") ||
     typeof datasetVersion !== "string" ||
     datasetVersion !== publicationArtifacts.datasetVersion ||
+    publicationTimestamp === undefined ||
+    artifactRoots === null ||
     propertyUnavailable !== 0 ||
     coordinateAvailable + coordinateUnavailable !== propertyCount ||
     roofAvailable + roofUnavailable !== propertyCount ||
@@ -435,6 +459,7 @@ async function probeReadiness(
   ) {
     throw new OracleReadinessError("publication_metadata");
   }
+  const sourceSnapshot = isSourceSnapshotVersion(datasetVersion);
 
   return {
     ready: true,
@@ -443,11 +468,16 @@ async function probeReadiness(
     schemaHash: EXPECTED_MCP_SCHEMA_SHA256,
     tools: ORACLE_MCP_TOOL_NAMES,
     publication: {
-      label: publicationLabel(status),
+      label: publicationLabel(status, sourceSnapshot),
       recordCount: propertyCount,
       authoritativeComplete: false,
+      datasetVersion,
+      sourceSnapshot,
       publicationStatus: status,
       datasetFreshness,
+      datasetFreshnessBasis,
+      publicationObjectCount,
+      publicationTimestamp,
       coordinatesAvailable: coordinateAvailable,
       coordinatesUnavailable: coordinateUnavailable,
       roofSignalsDirect: roofDirect,

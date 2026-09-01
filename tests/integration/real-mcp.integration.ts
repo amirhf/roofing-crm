@@ -18,7 +18,10 @@ import {
 import { GET as listLeads, POST as postLead } from "../../src/app/api/leads/route";
 import { resetLeadRepositoryForTests } from "../../src/crm/repository-factory";
 import { ContractValidatingOracleClient } from "../../src/oracle/client";
-import { StreamableHttpOracleMcpTransport } from "../../src/oracle/mcp-transport";
+import {
+  MAX_ORACLE_MCP_HTTP_RESPONSE_BYTES,
+  StreamableHttpOracleMcpTransport,
+} from "../../src/oracle/mcp-transport";
 import {
   ORACLE_MCP_TOOL_NAMES,
   type OracleResult,
@@ -30,6 +33,8 @@ import {
 const MCP_URL = process.env.ORACLE_MCP_URL ?? "http://127.0.0.1:9090/mcp";
 const HEALTH_URL = new URL("/health", MCP_URL).toString();
 const ACTIVE_HASH = "9fc112ef8a4e2120593c3dc20c90073b0eb96596817c96112f63fd258bb7c131";
+const OPEN_DATA_ROOT = "QmVqEfh8BwE8QXAyhoNSVprSB726eYynfQtZWUxXh3r1sy";
+const QUERY_TABLE_ROOT = "QmPH58KURSVWdbmBMb3gBTexs5a1EKxKpKD4QfTdW24Cdw";
 const MISSING_COORDINATE_PROPERTY_ID =
   process.env.REAL_MCP_MISSING_COORDINATE_PROPERTY_ID;
 const SESSION_SECRET = "local-real-mcp-integration-session-secret";
@@ -200,7 +205,7 @@ beforeAll(async () => {
   vi.stubEnv("SESSION_SECRET", SESSION_SECRET);
 
   const result = await oracle.searchRoofingOpportunities(searchInput, {
-    timeoutMs: 10_000,
+    timeoutMs: 30_000,
   });
   if (!result.ok) throw new Error("The real MCP search did not return success.");
   if (result.data.opportunities.length === 0) {
@@ -221,7 +226,7 @@ describe("real Oracle MCP interoperability", () => {
     );
   });
 
-  it("reports the active v1.2 contract and 25,000-property coverage", async () => {
+  it("reports the active v1.2 contract and source-snapshot coverage", async () => {
     const service = await oracle.getServiceInfo({ timeoutMs: 5_000 });
     expect(service).toMatchObject({
       ok: true,
@@ -233,6 +238,7 @@ describe("real Oracle MCP interoperability", () => {
       },
       meta: { contractVersion: "1.2.0", schemaHash: ACTIVE_HASH },
     });
+    if (!service.ok) return;
 
     const summary = await oracle.getPipelineRunSummary({}, { timeoutMs: 5_000 });
     expect(summary.ok).toBe(true);
@@ -242,9 +248,23 @@ describe("real Oracle MCP interoperability", () => {
     const coverage = object(data.coverage);
     const properties = object(coverage.properties);
     const coordinates = object(coverage.coordinates);
-    expect(reconciliation.canonicalProperties).toBe(25_000);
-    expect(properties.available).toBe(25_000);
-    expect(coordinates.unavailable).toBe(5);
+    const roofSignals = object(coverage.roofSignals);
+    const publication = object(data.publicationArtifacts);
+    expect(reconciliation.canonicalProperties).toBe(325_213);
+    expect(properties.available).toBe(325_213);
+    expect(coordinates.available).toBe(24_995);
+    expect(coordinates.unavailable).toBe(300_218);
+    expect(roofSignals.proxy).toBe(261_590);
+    expect(roofSignals.direct).toBe(0);
+    expect(publication.artifactCount).toBe(325_312);
+    expect(publication.publishedAt).toBeNull();
+    expect(publication.artifactCids).toEqual(
+      expect.arrayContaining([OPEN_DATA_ROOT, QUERY_TABLE_ROOT]),
+    );
+    expect(publication.artifactCids).toHaveLength(4);
+    expect(object(service.data).dataset).toMatchObject({
+      version: expect.stringMatching(/^pasco-source-snapshot-[a-f0-9]+$/),
+    });
 
     const querySchema = await oracle.getQuerySchema({ timeoutMs: 5_000 });
     expect(querySchema.ok).toBe(true);
@@ -284,6 +304,19 @@ describe("real Oracle MCP interoperability", () => {
     ).toBe(true);
   });
 
+  it("keeps a live ten-result source-snapshot response inside the bounded transport", async () => {
+    const result = await oracle.searchRoofingOpportunities(
+      { ...searchInput, page: { limit: 10 } },
+      { timeoutMs: 60_000 },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.opportunities).toHaveLength(10);
+    expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThan(
+      MAX_ORACLE_MCP_HTTP_RESPONSE_BYTES,
+    );
+  });
+
   it("uses stable opaque pagination and direct property lookup", async () => {
     expect(firstPage.meta.nextCursor).toEqual(expect.any(String));
     const second = await oracle.searchRoofingOpportunities(
@@ -291,10 +324,10 @@ describe("real Oracle MCP interoperability", () => {
         ...searchInput,
         page: { ...searchInput.page, cursor: firstPage.meta.nextCursor! },
       },
-      { timeoutMs: 10_000 },
+      { timeoutMs: 30_000 },
     );
     const replay = await oracle.searchRoofingOpportunities(searchInput, {
-      timeoutMs: 10_000,
+      timeoutMs: 30_000,
     });
     expect(second.ok).toBe(true);
     expect(replay.ok).toBe(true);
@@ -311,7 +344,7 @@ describe("real Oracle MCP interoperability", () => {
     );
 
     const propertyId = firstPage.data.opportunities[0]!.property.propertyId;
-    const direct = await oracle.getProperty({ propertyId }, { timeoutMs: 5_000 });
+    const direct = await oracle.getProperty({ propertyId }, { timeoutMs: 20_000 });
     expect(direct).toMatchObject({
       ok: true,
       data: { propertyId },

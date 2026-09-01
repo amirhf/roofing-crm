@@ -46,12 +46,15 @@ describe("typed Oracle client boundary", () => {
   it("keeps a valid ten-result MCP search response within the streaming byte bound", async () => {
     const response = structuredClone(searchResponseFixture.result);
     const template = response.data.opportunities[0]!;
+    template.property.evidence[0]!.sourceName =
+      "Synthetic source-snapshot evidence metadata ".repeat(450);
     response.data.opportunities = Array.from({ length: 10 }, (_, index) => {
       const opportunity = structuredClone(template);
       opportunity.property.propertyId = `prop_${index.toString(16).padStart(32, "0")}`;
       return opportunity;
     });
     const measuredBytes = new TextEncoder().encode(JSON.stringify(response)).byteLength;
+    expect(measuredBytes).toBeGreaterThan(131_072);
     expect(measuredBytes).toBeLessThan(MAX_ORACLE_MCP_HTTP_RESPONSE_BYTES);
     const client = new ContractValidatingOracleClient(
       new StubTransport(response),
